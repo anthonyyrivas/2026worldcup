@@ -204,13 +204,13 @@ progress::-webkit-progress-value{background:var(--gold)}
 .snap-btns{display:flex;justify-content:center;gap:.5rem;margin-top:1.1rem;flex-wrap:wrap}
 
 /* ---- MODAL ---- */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem}
-.modal{background:var(--n2);border:1px solid var(--border);border-radius:13px;padding:1.3rem 1.15rem;max-width:420px;width:100%;position:relative}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:.75rem;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.modal{background:var(--n2);border:1px solid var(--border);border-radius:13px;padding:1.1rem 1rem;max-width:380px;width:100%;position:relative;margin:auto;max-height:none}
 .modal h2{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--gold);letter-spacing:.08em;margin-bottom:.25rem}
 .modal p{font-size:.74rem;color:var(--muted);line-height:1.55;margin-bottom:.75rem}
 .modal-x{position:absolute;top:.65rem;right:.8rem;background:none;border:none;color:var(--muted);font-size:1.05rem;cursor:pointer}
 .modal-x:hover{color:var(--text)}
-.wa-preview{background:linear-gradient(135deg,#075E54,#128C7E);border-radius:9px;padding:.9rem 1rem;font-size:.77rem;line-height:1.7;color:#E0FFE8;white-space:pre-wrap;word-break:break-word;margin-bottom:.7rem;max-height:240px;overflow-y:auto;font-family:monospace}
+.wa-preview{background:linear-gradient(135deg,#075E54,#128C7E);border-radius:9px;padding:.7rem .85rem;font-size:.72rem;line-height:1.6;color:#E0FFE8;white-space:pre-wrap;word-break:break-word;margin-bottom:.6rem;max-height:150px;overflow-y:auto;font-family:monospace}
 
 /* ---- FETCH PANEL ---- */
 .fetch-panel{background:linear-gradient(135deg,rgba(201,168,76,.08),rgba(201,168,76,.03));border:1px solid var(--border);border-radius:13px;padding:1.1rem;margin-bottom:1rem}
@@ -254,6 +254,27 @@ progress::-webkit-progress-value{background:var(--gold)}
 .pub-fin-lbl{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}
 .pub-vs{font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--dim)}
 .pub-actions{display:flex;justify-content:center;gap:.5rem;margin:1rem 0;flex-wrap:wrap}
+
+/* HOT TAKE */
+.hot-take-wrap{background:linear-gradient(135deg,rgba(204,41,54,.1),rgba(204,41,54,.05));border:1px solid rgba(204,41,54,.35);border-radius:12px;padding:1rem 1rem .9rem;margin-top:1rem}
+.hot-take-wrap h3{font-family:'Bebas Neue',sans-serif;font-size:1rem;color:#FF6B7A;letter-spacing:.1em;margin-bottom:.2rem;display:flex;align-items:center;gap:.4rem}
+.hot-take-wrap p{font-size:.7rem;color:var(--muted);margin-bottom:.6rem;line-height:1.5}
+.hot-take-input{width:100%;background:var(--navy);border:1.5px solid rgba(204,41,54,.4);border-radius:var(--r);color:var(--text);font-family:'DM Sans',sans-serif;font-size:.85rem;padding:.65rem .85rem;outline:none;resize:none;min-height:72px;line-height:1.5;transition:border-color .15s;-webkit-appearance:none}
+.hot-take-input:focus{border-color:#FF6B7A}
+.hot-take-input::placeholder{color:var(--dim)}
+.hot-take-input:disabled{opacity:.5;cursor:not-allowed}
+.hot-take-display{background:var(--navy);border:1.5px solid rgba(204,41,54,.3);border-radius:var(--r);padding:.65rem .85rem;font-size:.85rem;color:var(--text);line-height:1.5;font-style:italic;min-height:48px}
+.hot-take-char{font-size:.65rem;color:var(--dim);text-align:right;margin-top:.25rem}
+
+/* STEP COMPLETE POPUP */
+.step-popup-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1100;display:flex;align-items:center;justify-content:center;padding:1rem;animation:fadeIn .2s}
+.step-popup{background:var(--n2);border:1px solid var(--border);border-radius:14px;padding:1.5rem 1.2rem;max-width:320px;width:100%;text-align:center;animation:popIn .25s}
+.step-popup-icon{font-size:2.5rem;display:block;margin-bottom:.5rem}
+.step-popup h3{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--gold);letter-spacing:.08em;margin-bottom:.3rem}
+.step-popup p{font-size:.78rem;color:var(--muted);line-height:1.5;margin-bottom:1rem}
+.step-popup .btn{font-size:.82rem;padding:.6rem 1.5rem}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes popIn{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}
 
 @media(max-width:560px){
   .lb-head,.lb-row{grid-template-columns:24px 1fr 44px 38px 38px}
@@ -372,6 +393,15 @@ progress::-webkit-progress-value{background:var(--gold)}
   </div>
 </div>
 
+<div id="step-popup" class="step-popup-bg" style="display:none">
+  <div class="step-popup">
+    <span class="step-popup-icon" id="sp-icon"></span>
+    <h3 id="sp-title"></h3>
+    <p id="sp-text"></p>
+    <button class="btn" id="sp-btn" onclick="closeStepPopup()">Continue</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -449,7 +479,8 @@ if(!S.res) S.res={groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''};
 save();
 
 function ep(id){
-  if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},champion:'',runnerUp:''};
+  if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},champion:'',runnerUp:'',hotTake:''};
+  if(S.preds[id].hotTake===undefined) S.preds[id].hotTake=''; // migrate old data
   return S.preds[id];
 }
 
@@ -498,24 +529,32 @@ function resolveR32slots(pred){
     {matchId:87, eligible:['D','E','I','J','L']},
   ];
 
-  // Assign each best-3rd team to exactly one slot.
-  // Strategy: for each slot, find the first best-3rd team whose source
-  // group is eligible AND hasn't been assigned yet.
+  // Assign each best-3rd team to exactly one slot using backtracking.
+  // A greedy first-fit fails for some group combos (e.g. ABCDEFGH),
+  // so we must try all permutations with pruning.
   const assigned={}; // matchId → team name
-  const usedTeams=new Set();
 
-  thirdSlots.forEach(slot=>{
-    const team=best8.find(tn=>{
-      if(usedTeams.has(tn))return false;
-      // Find which group this team came 3rd in
-      const srcGroup=GKEYS.find(g=>thirdsByGroup[g]===tn);
-      return srcGroup && slot.eligible.includes(srcGroup);
-    });
-    if(team){
-      assigned[slot.matchId]=team;
-      usedTeams.add(team);
+  // Build list of source groups for the best8 teams
+  const best8Groups = best8.map(tn => {
+    const srcGroup = GKEYS.find(g => thirdsByGroup[g] === tn);
+    return { team: tn, group: srcGroup };
+  }).filter(x => x.group);
+
+  function solveSlots(slotIdx, usedGroups) {
+    if (slotIdx >= thirdSlots.length) return true;
+    const slot = thirdSlots[slotIdx];
+    for (const { team, group } of best8Groups) {
+      if (usedGroups.has(group)) continue;
+      if (!slot.eligible.includes(group)) continue;
+      assigned[slot.matchId] = team;
+      usedGroups.add(group);
+      if (solveSlots(slotIdx + 1, usedGroups)) return true;
+      delete assigned[slot.matchId];
+      usedGroups.delete(group);
     }
-  });
+    return false;
+  }
+  solveSlots(0, new Set());
 
   // Now build the full R32 slot map
   function slot(lbl,matchId){
@@ -592,6 +631,25 @@ function getTeams(pred,matchId){
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function ti(n){if(!n)return{n:'TBD',f:''};return ALL_TEAMS.find(t=>t.n===n)||{n,f:''};}
 let _tt; function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>el.classList.remove('show'),2500);}
+
+/* Step-complete popup */
+let _spNextStep = null;
+function showStepPopup(icon, title, text, nextStepId, nextLabel) {
+  _spNextStep = nextStepId;
+  document.getElementById('sp-icon').textContent = icon;
+  document.getElementById('sp-title').textContent = title;
+  document.getElementById('sp-text').textContent = text;
+  const btn = document.getElementById('sp-btn');
+  btn.textContent = nextLabel || 'Continue';
+  document.getElementById('step-popup').style.display = 'flex';
+}
+function closeStepPopup() {
+  document.getElementById('step-popup').style.display = 'none';
+  if (_spNextStep) {
+    goStep(_spNextStep);
+    _spNextStep = null;
+  }
+}
 
 function enc(o){try{return btoa(unescape(encodeURIComponent(JSON.stringify(o))));}catch{return '';}}
 function dec(s){try{return JSON.parse(decodeURIComponent(escape(atob(s))));}catch{return null;}}
@@ -822,7 +880,7 @@ function handlePos(e){
   gp[pos]=team;save();
   const allDone=GKEYS.every(gr=>{const p2=pred.groups[gr];return p2&&p2.first&&p2.second&&p2.third;});
   renderPred();
-  if(allDone)setTimeout(()=>toast('All groups done! Tap Best 3rd to continue'),300);
+  if(allDone) setTimeout(()=>showStepPopup('✅','Groups Complete!','All 12 groups are filled. Now pick the 8 best third-place teams that qualify for the Round of 32.','best3','Pick Best 3rd Teams →'),300);
 }
 
 /* ---- BEST 3RD ---- */
@@ -859,7 +917,7 @@ function handleB3(e){
   else if(pred.best3.length<8)pred.best3.push(name);
   else{toast('Already selected 8 - deselect one first');return;}
   save();
-  if(pred.best3.length===8)setTimeout(()=>toast('Best 3rd done! Tap Round of 32 to continue'),300);
+  if(pred.best3.length===8)setTimeout(()=>showStepPopup('🎯','Best 3rd Selected!','Your 8 third-place qualifiers are locked in. They\'ve been placed into the R32 bracket using FIFA\'s official allocation matrix. Time to pick your knockout winners!','R32','Start Round of 32 →'),300);
   renderPred();
 }
 
@@ -1027,16 +1085,16 @@ function renderBracketStep(pred,round,body,locked){
   /* ---- Next step button ---- */
   if(allFilled&&!locked){
     const nb=document.getElementById(`ko-next-${round}`);
-    const bar=document.createElement('div');bar.className='next-bar';
     const nextLbl=nextRound[round]?RLBL[nextRound[round]]:'';
-    bar.innerHTML=`<span style="font-size:.7rem;color:var(--green)">All ${round} picks done!</span>`;
-    const btn2=document.createElement('button');
-    btn2.className='btn';
-    btn2.textContent=`Next: ${nextLbl}`;
-    btn2.addEventListener('click',()=>goStep(nextRound[round]));
-    bar.appendChild(btn2);
-    nb.appendChild(bar);
-    setTimeout(()=>toast(`${round} complete! Continue to ${nextLbl}`),150);
+    const icons={R32:'⚔️',R16:'🏟️',QF:'🔥',SF:'🏆'};
+    const descs={
+      R32:'Round of 32 picks are in! Your winners advance to the Round of 16.',
+      R16:'Round of 16 done! Your 8 winners move to the Quarter-Finals.',
+      QF:'Quarter-Finals locked! Your 4 winners head to the Semi-Finals.',
+      SF:'Semi-Finals picked! Now choose your Champion and Runner-Up for maximum points!'
+    };
+    const nextId=nextRound[round];
+    setTimeout(()=>showStepPopup(icons[round]||'✅',`${round} Complete!`,descs[round]||'',nextId,`Continue to ${nextLbl} →`),200);
   }
 }
 
@@ -1055,6 +1113,7 @@ function renderFinal(pred,body,locked){
   const sfPicks=pred.sf||{};
   const fin1=sfPicks[101]||null,fin2=sfPicks[102]||null;
   const allDone=pred.champion&&pred.runnerUp;
+  const hotTake=pred.hotTake||'';
   body.innerHTML=`<div class="info">Final step! Pick your champion and runner-up. Bonus +8 pts for correctly predicting any finalist.</div>
   <div class="finals-grid">
     <div class="final-card"><h3>Champion</h3>
@@ -1072,10 +1131,44 @@ function renderFinal(pred,body,locked){
         <optgroup label="All teams">${ALL_TEAMS.map(t=>`<option value="${t.n}" ${pred.runnerUp===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</optgroup>
       </select></div>
   </div>
-  ${allDone?`<div class="ok" style="text-align:center">Bracket complete! Share your picks on WhatsApp.</div>`:''}`;
+  <div class="hot-take-wrap">
+    <h3>🔥 Hot Take</h3>
+    <p>What's your boldest prediction? Write something controversial — it gets shared with your bracket and locked in when the tournament starts.</p>
+    ${locked
+      ? hotTake
+        ? `<div class="hot-take-display">"${esc(hotTake)}"</div>`
+        : `<div class="hot-take-display" style="color:var(--dim);font-style:italic">No hot take submitted.</div>`
+      : `<textarea id="hot-take-input" class="hot-take-input" maxlength="120" placeholder='e.g. "France gets eliminated in the group stage" or "Brazil wins it all from Group C"'>${esc(hotTake)}</textarea>
+         <div class="hot-take-char"><span id="hot-take-count">${hotTake.length}</span>/120</div>`
+    }
+  </div>
+  ${allDone?`<div class="ok" style="text-align:center;margin-top:.75rem">Bracket 100% complete!</div>`:''}`;
+
   if(!locked){
-    document.getElementById('pick-champ').addEventListener('change',function(){ep(CUR_USER).champion=this.value||'';save();renderPred();});
-    document.getElementById('pick-runner').addEventListener('change',function(){ep(CUR_USER).runnerUp=this.value||'';save();renderPred();});
+    document.getElementById('pick-champ').addEventListener('change',function(){
+      ep(CUR_USER).champion=this.value||'';save();renderPred();
+      checkFinalDone();
+    });
+    document.getElementById('pick-runner').addEventListener('change',function(){
+      ep(CUR_USER).runnerUp=this.value||'';save();renderPred();
+      checkFinalDone();
+    });
+    const htInput=document.getElementById('hot-take-input');
+    if(htInput){
+      htInput.addEventListener('input',function(){
+        const val=this.value.slice(0,120);
+        this.value=val;
+        document.getElementById('hot-take-count').textContent=val.length;
+        ep(CUR_USER).hotTake=val;
+        save();
+      });
+    }
+  }
+}
+function checkFinalDone(){
+  const pred=ep(CUR_USER);
+  if(pred.champion&&pred.runnerUp){
+    setTimeout(()=>showStepPopup('🏆','Bracket Complete!','Your full World Cup 2026 prediction is locked in! Share your bracket with friends on WhatsApp and see who gets the best score.',null,'Done!'),300);
   }
 }
 function clearStep(){
@@ -1138,6 +1231,14 @@ function buildWAMsg(uid){
   lines.push(`3rd Place: ${third?wname(third):'TBD'}`);
   lines.push(`4th Place: ${fourth?wname(fourth):'TBD'}`);
   lines.push('');
+
+  // Hot Take
+  if(pred.hotTake&&pred.hotTake.trim()){
+    lines.push(`*MY HOT TAKE*`);
+    lines.push(`"${pred.hotTake.trim()}"`);
+    lines.push('');
+  }
+
   lines.push(`Join the challenge: ${APP_URL}`);
   return lines.join('\n');
 }
@@ -1238,6 +1339,11 @@ function renderPublicView(data){
       ${third?`<div style="text-align:center"><div style="font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">3rd Place</div><div style="font-size:.8rem;font-weight:600;margin-top:.1rem">${ti(third).f} ${esc(dname(third))}</div></div>`:''}
       ${fourth?`<div style="text-align:center"><div style="font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">4th Place</div><div style="font-size:.8rem;font-weight:600;margin-top:.1rem">${ti(fourth).f} ${esc(dname(fourth))}</div></div>`:''}
     </div>`:''}
+    ${pred.hotTake&&pred.hotTake.trim()?`
+    <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid rgba(204,41,54,.25)">
+      <div style="font-size:.6rem;color:#FF6B7A;font-family:'Bebas Neue',sans-serif;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.3rem">🔥 Hot Take</div>
+      <div style="font-size:.82rem;font-style:italic;color:var(--text);line-height:1.5">"${esc(pred.hotTake.trim())}"</div>
+    </div>`:''}
   </div>
   <div style="margin-bottom:.9rem"><div class="pub-sec">Group Stage</div>
   <div class="pub-g-grid">
@@ -1333,8 +1439,9 @@ function renderLB(){
     const med=i===0?'1':i===1?'2':i===2?'3':'';
     const prev=_prevRanks[p.id];const delta=prev?prev-(i+1):0;
     const dHtml=delta>0?`<span class="up">+${delta}</span>`:delta<0?`<span class="down">${delta}</span>`:'<span class="same">-</span>';
+    const hotTake = (S.preds[p.id]||{}).hotTake||'';
     html+=`<div class="lb-row r${i+1}"><div class="rnk">${med||(i+1)}</div>
-      <div class="lb-name">${esc(p.name)}</div><div class="lb-pts">${p.sc.total}</div>
+      <div class="lb-name">${esc(p.name)}${hotTake?`<div style="font-size:.62rem;color:#FF6B7A;font-weight:400;font-style:italic;margin-top:.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px" title="${esc(hotTake)}">🔥 ${esc(hotTake)}</div>`:''}</div><div class="lb-pts">${p.sc.total}</div>
       <div class="lb-sub lb-hide">${p.sc.group}</div><div class="lb-sub lb-hide">${p.sc.ko}</div><div class="lb-sub lb-hide">${p.sc.final}</div>
       <div class="lb-pct">${p.pct}%</div>
       <div style="display:flex;gap:.2rem">
@@ -1401,11 +1508,17 @@ function showLBSnap(){
   if(!S.p.length){c.innerHTML='<p style="color:var(--dim);font-size:.73rem">No participants.</p>';return;}
   const scored=S.p.map(p=>({...p,sc:calcScore(p.id)})).sort((a,b)=>b.sc.total-a.sc.total);
   c.innerHTML=`<div class="podium" id="lb-snap"><div class="podium-title">Leaderboard</div><div class="podium-sub">WC 2026 Challenge</div>
-    <div style="margin-top:.75rem">${scored.map((p,i)=>`<div style="display:flex;align-items:center;gap:.72rem;padding:.46rem .55rem;border-bottom:1px solid var(--subtle)">
-      <span style="font-size:1rem;width:1.6rem;text-align:center">${['1','2','3'][i]||'#'+(i+1)}</span>
-      <span style="flex:1;font-weight:500;font-size:.82rem">${esc(p.name)}</span>
-      <span style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold)">${p.sc.total} pts</span>
-    </div>`).join('')}</div>
+    <div style="margin-top:.75rem">${scored.map((p,i)=>{
+      const ht=(S.preds[p.id]||{}).hotTake||'';
+      return`<div style="display:flex;align-items:center;gap:.72rem;padding:.46rem .55rem;border-bottom:1px solid var(--subtle)">
+        <span style="font-size:1rem;width:1.6rem;text-align:center">${['1','2','3'][i]||'#'+(i+1)}</span>
+        <div style="flex:1">
+          <div style="font-weight:500;font-size:.82rem">${esc(p.name)}</div>
+          ${ht?`<div style="font-size:.62rem;color:#FF6B7A;font-style:italic;margin-top:.08rem">🔥 ${esc(ht)}</div>`:''}
+        </div>
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold)">${p.sc.total} pts</span>
+      </div>`;
+    }).join('')}</div>
     <div style="text-align:center;margin-top:.72rem;padding-top:.55rem;border-top:1px solid var(--border);font-size:.6rem;color:var(--dim);letter-spacing:.12em">2026worldcup-nine.vercel.app</div>
   </div>
   <div style="display:flex;justify-content:center;gap:.42rem;margin-top:.52rem;flex-wrap:wrap">
