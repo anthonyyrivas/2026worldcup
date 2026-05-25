@@ -456,34 +456,133 @@ function ep(id){
 /* ==============================================================
    BRACKET RESOLUTION
    ============================================================== */
+/* ------------------------------------------------------------------
+   resolveR32slots
+   Maps the official R32 bracket slots to actual teams from predictions.
+
+   The 8 third-place slots each have a set of eligible groups. We must
+   assign each best-3rd team to EXACTLY ONE slot — the first eligible
+   slot that hasn't already been filled. Teams are never double-assigned.
+
+   Official slot → eligible groups (from FIFA allocation matrix):
+     M74: A B C D F
+     M77: C D F G H
+     M79: C E F H I
+     M80: E H I J K
+     M81: B E F I J
+     M82: A E H I J
+     M85: E F G I J
+     M87: D E I J L
+   ------------------------------------------------------------------ */
 function resolveR32slots(pred){
   const gp=pred.groups||{};
   const gf={};
   GKEYS.forEach(g=>{const p=gp[g]||{};gf[g]={first:p.first||null,second:p.second||null,third:p.third||null};});
-  const thirds=GKEYS.map(g=>({group:g,team:gf[g].third})).filter(x=>x.team);
+
+  // Build a map: group letter → which team is that group's 3rd place
+  const thirdsByGroup={};
+  GKEYS.forEach(g=>{if(gf[g].third)thirdsByGroup[g]=gf[g].third;});
+
+  // The user's best-3rd picks (ordered by selection)
   const best8=pred.best3||[];
-  function slot(lbl){
+
+  // Third-place slots in R32 with eligible groups
+  const thirdSlots=[
+    {matchId:74, eligible:['A','B','C','D','F']},
+    {matchId:77, eligible:['C','D','F','G','H']},
+    {matchId:79, eligible:['C','E','F','H','I']},
+    {matchId:80, eligible:['E','H','I','J','K']},
+    {matchId:81, eligible:['B','E','F','I','J']},
+    {matchId:82, eligible:['A','E','H','I','J']},
+    {matchId:85, eligible:['E','F','G','I','J']},
+    {matchId:87, eligible:['D','E','I','J','L']},
+  ];
+
+  // Assign each best-3rd team to exactly one slot.
+  // Strategy: for each slot, find the first best-3rd team whose source
+  // group is eligible AND hasn't been assigned yet.
+  const assigned={}; // matchId → team name
+  const usedTeams=new Set();
+
+  thirdSlots.forEach(slot=>{
+    const team=best8.find(tn=>{
+      if(usedTeams.has(tn))return false;
+      // Find which group this team came 3rd in
+      const srcGroup=GKEYS.find(g=>thirdsByGroup[g]===tn);
+      return srcGroup && slot.eligible.includes(srcGroup);
+    });
+    if(team){
+      assigned[slot.matchId]=team;
+      usedTeams.add(team);
+    }
+  });
+
+  // Now build the full R32 slot map
+  function slot(lbl,matchId){
     if(!lbl)return null;
     if(lbl[0]==='1')return gf[lbl[1]]?.first||null;
     if(lbl[0]==='2')return gf[lbl[1]]?.second||null;
-    if(lbl.startsWith('3')){
-      const allowed=lbl.slice(1).split('');
-      return best8.find(tn=>{const src=thirds.find(x=>x.team===tn);return src&&allowed.includes(src.group);})||null;
-    }
+    if(lbl.startsWith('3'))return assigned[matchId]||null;
     return null;
   }
+
   const out={};
-  R32.forEach(m=>{out[m.id]={t1:slot(m.home),t2:slot(m.away),slotHome:m.home,slotAway:m.away};});
+  R32.forEach(m=>{
+    out[m.id]={
+      t1:slot(m.home,m.id),
+      t2:slot(m.away,m.id),
+      slotHome:m.home,
+      slotAway:m.away
+    };
+  });
   return out;
 }
 
+/* ------------------------------------------------------------------
+   getTeams — resolves who plays in a given knockout match based on
+   the user's picks in the previous round.
+
+   Storage format:
+     pred.r32[matchId] = winning team name  (e.g. pred.r32[73] = 'Brazil')
+     pred.r16[matchId] = winning team name  (e.g. pred.r16[89] = 'France')
+     etc.
+
+   For R16 match 89: teams are winners of R32 M74 and R32 M77
+   For QF  match 97: teams are winners of R16 M89 and R16 M90
+   etc.
+   ------------------------------------------------------------------ */
 function getTeams(pred,matchId){
+  // R32 — resolve from group picks
   const r32s=resolveR32slots(pred);
   if(r32s[matchId])return{t1:r32s[matchId].t1,t2:r32s[matchId].t2};
-  const r16m=R16.find(m=>m.id===matchId); if(r16m)return{t1:pred.r32[r16m.m1]||null,t2:pred.r32[r16m.m2]||null};
-  const qfm=QF.find(m=>m.id===matchId); if(qfm)return{t1:pred.r16[qfm.m1]||null,t2:pred.r16[qfm.m2]||null};
-  const sfm=SF.find(m=>m.id===matchId); if(sfm)return{t1:pred.qf[sfm.m1]||null,t2:pred.qf[sfm.m2]||null};
-  if(matchId===104)return{t1:pred.sf[101]||null,t2:pred.sf[102]||null};
+
+  // R16 — teams come from R32 winners picked by user
+  const r16m=R16.find(m=>m.id===matchId);
+  if(r16m){
+    const r32picks=pred.r32||{};
+    return{t1:r32picks[r16m.m1]||null, t2:r32picks[r16m.m2]||null};
+  }
+
+  // QF — teams come from R16 winners
+  const qfm=QF.find(m=>m.id===matchId);
+  if(qfm){
+    const r16picks=pred.r16||{};
+    return{t1:r16picks[qfm.m1]||null, t2:r16picks[qfm.m2]||null};
+  }
+
+  // SF — teams come from QF winners
+  const sfm=SF.find(m=>m.id===matchId);
+  if(sfm){
+    const qfpicks=pred.qf||{};
+    return{t1:qfpicks[sfm.m1]||null, t2:qfpicks[sfm.m2]||null};
+  }
+
+  // Final (M104) — teams come from SF winners
+  if(matchId===104){
+    const sfpicks=pred.sf||{};
+    return{t1:sfpicks[101]||null, t2:sfpicks[102]||null};
+  }
+
   return{t1:null,t2:null};
 }
 
@@ -768,119 +867,176 @@ function handleB3(e){
 function renderBracketStep(pred,round,body,locked){
   const structs={R32,R16,QF,SF};
   const pickKeys={R32:'r32',R16:'r16',QF:'qf',SF:'sf'};
-  const nextR={R32:'R16',R16:'QF',QF:'SF',SF:'Final'};
+  const nextRound={R32:'R16',R16:'QF',QF:'SF',SF:'Final'};
+  const nextStructs={R16,QF,SF};
+  const nextPkMap={R16:'r16',QF:'qf',SF:'sf'};
+
   const matches=structs[round];
   const pk=pickKeys[round];
   const picks=pred[pk]||{};
   const r32slots=resolveR32slots(pred);
-  const total=matches.length,filled=Object.values(picks).filter(Boolean).length,allFilled=filled===total;
+  const total=matches.length;
+  const filled=Object.values(picks).filter(Boolean).length;
+  const allFilled=filled===total;
+  const showNextCol=nextRound[round]&&nextRound[round]!=='Final'&&nextStructs[nextRound[round]];
 
-  body.innerHTML=`<div class="info">${RLBL[round]} - click the team you think wins each match. <strong>${filled}/${total} picked.</strong></div>
+  body.innerHTML=`<div class="info">${RLBL[round]} — click the team you think wins each match. <strong>${filled}/${total} picked.</strong></div>
   <div class="bracket-container"><div class="bracket-inner" id="bracket-inner-${round}"></div></div>
   <div id="ko-next-${round}"></div>`;
 
   const container=document.getElementById(`bracket-inner-${round}`);
 
-  // Determine how many "columns" this round has visually
-  // We show current round + next (as TBD) if not last
-  const roundCols=[round];
-  if(nextR[round]&&nextR[round]!=='Final') roundCols.push(nextR[round]);
+  /* ---- Current round column ---- */
+  const col=document.createElement('div');
+  col.className='b-col';
+  const hdr=document.createElement('div');
+  hdr.className='b-col-hdr';
+  hdr.textContent=RLBL[round];
+  col.appendChild(hdr);
 
-  // Build current round column
-  const col=document.createElement('div');col.className='b-col';
-  const hdr=document.createElement('div');hdr.className='b-col-hdr';hdr.textContent=RLBL[round];col.appendChild(hdr);
-
-  matches.forEach((m,mi)=>{
-    let t1,t2,slot1lbl,slot2lbl;
-    if(round==='R32'){const sl=r32slots[m.id];t1=sl?.t1;t2=sl?.t2;slot1lbl=m.home;slot2lbl=m.away;}
-    else{const tm=getTeams(pred,m.id);t1=tm.t1;t2=tm.t2;}
-    const picked=picks[m.id];
+  matches.forEach(m=>{
+    let t1=null,t2=null,slot1lbl='',slot2lbl='';
+    if(round==='R32'){
+      const sl=r32slots[m.id];
+      t1=sl?.t1||null; t2=sl?.t2||null;
+      slot1lbl=m.home; slot2lbl=m.away;
+    } else {
+      const tm=getTeams(pred,m.id);
+      t1=tm.t1; t2=tm.t2;
+    }
+    const picked=picks[m.id]||null;
     const i1=ti(t1),i2=ti(t2);
 
     const wrap=document.createElement('div');wrap.className='b-match-wrap';
     const card=document.createElement('div');card.className='b-match';
 
     const lbl=document.createElement('div');lbl.className='b-match-lbl';
-    lbl.innerHTML=`<span>Match</span><span>M${m.id}</span>`;card.appendChild(lbl);
+    lbl.innerHTML=`<span>${RLBL[round]}</span><span>M${m.id}</span>`;
+    card.appendChild(lbl);
 
-    // Team 1
+    // Team 1 row
     const r1=document.createElement('div');
-    r1.className='b-team'+(picked===t1?' sel':'')+((!t1)?' tbd':'');
-    r1.innerHTML=`<span class="b-flag">${i1.f}</span><span class="b-name">${t1?esc(dname(t1)):round==='R32'?esc(slot1lbl||'TBD'):'TBD'}</span><span class="b-chk">v</span>`;
-    if(t1&&!locked){r1.dataset.match=m.id;r1.dataset.team=t1;r1.dataset.pk=pk;r1.addEventListener('click',handleKO);}
-    else if(locked)r1.style.cursor='not-allowed';
+    r1.className='b-team'+(picked===t1&&t1?' sel':'')+(t1?'':' tbd');
+    r1.innerHTML=`<span class="b-flag">${i1.f}</span><span class="b-name">${t1?esc(dname(t1)):(round==='R32'?esc(slot1lbl):'TBD')}</span><span class="b-chk">✓</span>`;
+    if(t1&&!locked){
+      r1.dataset.match=m.id; r1.dataset.team=t1; r1.dataset.pk=pk;
+      r1.addEventListener('click',handleKO);
+    }
     card.appendChild(r1);
 
-    // Team 2
+    // Team 2 row
     const r2=document.createElement('div');
-    r2.className='b-team'+(picked===t2?' sel':'')+((!t2)?' tbd':'');
-    r2.innerHTML=`<span class="b-flag">${i2.f}</span><span class="b-name">${t2?esc(dname(t2)):round==='R32'?esc(slot2lbl||'TBD'):'TBD'}</span><span class="b-chk">v</span>`;
-    if(t2&&!locked){r2.dataset.match=m.id;r2.dataset.team=t2;r2.dataset.pk=pk;r2.addEventListener('click',handleKO);}
-    else if(locked)r2.style.cursor='not-allowed';
+    r2.className='b-team'+(picked===t2&&t2?' sel':'')+(t2?'':' tbd');
+    r2.innerHTML=`<span class="b-flag">${i2.f}</span><span class="b-name">${t2?esc(dname(t2)):(round==='R32'?esc(slot2lbl):'TBD')}</span><span class="b-chk">✓</span>`;
+    if(t2&&!locked){
+      r2.dataset.match=m.id; r2.dataset.team=t2; r2.dataset.pk=pk;
+      r2.addEventListener('click',handleKO);
+    }
     card.appendChild(r2);
 
     wrap.appendChild(card);
-
-    // Connector lines between pairs going to next round
-    const isEven=(mi%2===1);
-    if(isEven){
-      // draw vertical connector
-      const conn=document.createElement('div');
-      conn.style.cssText='position:absolute;right:-18px;top:0;width:2px;background:var(--subtle);pointer-events:none';
-      // height computed in JS after render
-      conn.className='b-connector-v';conn.dataset.pair=Math.floor(mi/2);
-      wrap.appendChild(conn);
-    }
     col.appendChild(wrap);
   });
   container.appendChild(col);
 
-  // Next round column (greyed-out winners so far, showing what's advancing)
-  if(nextR[round]&&nextR[round]!=='Final'){
-    const nextStructs={R16:R16,QF,SF,Final:FINAL};
-    const nextMatches=nextStructs[nextR[round]];
-    const nextPk={R16:'r16',QF:'qf',SF:'sf'}[nextR[round]]||'sf';
+  /* ---- SVG connectors + next-round preview column ----
+     Show only if the next round is not the Final AND we have next matches.
+     The preview column is READ-ONLY — it just shows who advances.
+     This prevents the same team appearing in two interactive columns.
+  ---- */
+  if(showNextCol){
+    const nextMatches=nextStructs[nextRound[round]];
+    const nextPk=nextPkMap[nextRound[round]];
     const nextPicks=pred[nextPk]||{};
 
-    // connector spacer
-    const spacer=document.createElement('div');spacer.style.cssText='display:flex;flex-direction:column;justify-content:space-around;padding:0 0 0 18px;min-width:18px';
-    // Draw H-connectors using SVG
-    const svgW=18,totalH=matches.length*52;
+    // SVG bracket connectors between match pairs
+    const matchH=64; // approximate height per match card
+    const svgW=24;
+    const numPairs=Math.floor(matches.length/2);
+    const totalH=matches.length*matchH;
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.setAttribute('width',svgW);svg.setAttribute('height',totalH);svg.style.cssText='flex-shrink:0;margin-top:36px';
-    for(let i=0;i<Math.floor(matches.length/2);i++){
-      const y1=(i*2)*52+26,y2=(i*2+1)*52+26,ymid=(y1+y2)/2;
-      const line=(x1,y1,x2,y2)=>{const l=document.createElementNS('http://www.w3.org/2000/svg','line');l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);l.setAttribute('stroke','var(--subtle)');l.setAttribute('stroke-width','1.5');svg.appendChild(l);};
-      line(0,y1,svgW/2,y1);line(0,y2,svgW/2,y2);line(svgW/2,y1,svgW/2,y2);line(svgW/2,ymid,svgW,ymid);
+    svg.setAttribute('width',svgW);
+    svg.setAttribute('height',totalH);
+    svg.style.cssText=`flex-shrink:0;margin-top:32px;align-self:flex-start`;
+
+    function svgLine(x1,y1,x2,y2){
+      const l=document.createElementNS('http://www.w3.org/2000/svg','line');
+      l.setAttribute('x1',x1); l.setAttribute('y1',y1);
+      l.setAttribute('x2',x2); l.setAttribute('y2',y2);
+      l.setAttribute('stroke','rgba(255,255,255,0.12)');
+      l.setAttribute('stroke-width','1.5');
+      svg.appendChild(l);
+    }
+
+    for(let i=0;i<numPairs;i++){
+      // midpoints of each match in the pair
+      const y1=i*2*matchH + matchH/2;
+      const y2=(i*2+1)*matchH + matchH/2;
+      const ymid=(y1+y2)/2;
+      svgLine(0,y1,svgW/2,y1);       // top horizontal
+      svgLine(0,y2,svgW/2,y2);       // bottom horizontal
+      svgLine(svgW/2,y1,svgW/2,y2);  // vertical join
+      svgLine(svgW/2,ymid,svgW,ymid);// output horizontal
     }
     container.appendChild(svg);
 
-    const nextCol=document.createElement('div');nextCol.className='b-col';
-    const nextHdr=document.createElement('div');nextHdr.className='b-col-hdr';nextHdr.style.opacity='.6';nextHdr.textContent=RLBL[nextR[round]];nextCol.appendChild(nextHdr);
+    // Next round column — read-only preview
+    const nextCol=document.createElement('div');
+    nextCol.className='b-col';
+    const nextHdr=document.createElement('div');
+    nextHdr.className='b-col-hdr';
+    nextHdr.style.cssText='opacity:.55;font-size:.7rem';
+    nextHdr.textContent=RLBL[nextRound[round]]+' (preview)';
+    nextCol.appendChild(nextHdr);
+
     nextMatches.forEach(nm=>{
-      const tm=getTeams(pred,nm.id);
-      const npicked=nextPicks[nm.id];
-      const card2=document.createElement('div');card2.className='b-match';card2.style.opacity='.7';
-      const lbl2=document.createElement('div');lbl2.className='b-match-lbl';
-      lbl2.innerHTML=`<span>Next</span><span>M${nm.id}</span>`;card2.appendChild(lbl2);
-      [tm.t1,tm.t2].forEach(t=>{
-        const row=document.createElement('div');row.className='b-team'+(npicked===t?' sel':'')+(!t?' tbd':'');
-        row.innerHTML=`<span class="b-flag">${ti(t).f}</span><span class="b-name">${t?esc(dname(t)):'TBD'}</span><span class="b-chk">v</span>`;
-        if(t&&!locked){row.dataset.match=nm.id;row.dataset.team=t;row.dataset.pk=nextPk;row.addEventListener('click',handleKO);}
+      // The two teams for this next-round match come from the two R32/R16/QF winners
+      // We get them from the user's picks in the CURRENT round (pk)
+      // nm.m1 and nm.m2 are the source match IDs
+      const src1=picks[nm.m1]||null;
+      const src2=picks[nm.m2]||null;
+      const npicked=nextPicks[nm.id]||null;
+
+      const card2=document.createElement('div');
+      card2.className='b-match';
+      card2.style.opacity='.6';
+
+      const lbl2=document.createElement('div');
+      lbl2.className='b-match-lbl';
+      lbl2.innerHTML=`<span>→ Next</span><span>M${nm.id}</span>`;
+      card2.appendChild(lbl2);
+
+      [src1,src2].forEach(t=>{
+        const row=document.createElement('div');
+        // Mark selected if already picked in next round
+        row.className='b-team'+(!t?' tbd':'')+(npicked===t&&t?' sel':'');
+        row.style.cursor='default'; // read-only — no click
+        const info=ti(t);
+        row.innerHTML=`<span class="b-flag">${info.f}</span><span class="b-name">${t?esc(dname(t)):'TBD'}</span>`;
         card2.appendChild(row);
       });
-      const wrap2=document.createElement('div');wrap2.className='b-match-wrap';wrap2.appendChild(card2);nextCol.appendChild(wrap2);
+
+      const wrap2=document.createElement('div');
+      wrap2.className='b-match-wrap';
+      wrap2.appendChild(card2);
+      nextCol.appendChild(wrap2);
     });
     container.appendChild(nextCol);
   }
 
+  /* ---- Next step button ---- */
   if(allFilled&&!locked){
     const nb=document.getElementById(`ko-next-${round}`);
     const bar=document.createElement('div');bar.className='next-bar';
+    const nextLbl=nextRound[round]?RLBL[nextRound[round]]:'';
     bar.innerHTML=`<span style="font-size:.7rem;color:var(--green)">All ${round} picks done!</span>`;
-    const btn2=document.createElement('button');btn2.className='btn';btn2.textContent=`Next: ${RLBL[nextR[round]]}`;
-    btn2.addEventListener('click',()=>goStep(nextR[round]));bar.appendChild(btn2);nb.appendChild(bar);
-    setTimeout(()=>toast(`${round} done! Continue to ${RLBL[nextR[round]]}`),150);
+    const btn2=document.createElement('button');
+    btn2.className='btn';
+    btn2.textContent=`Next: ${nextLbl}`;
+    btn2.addEventListener('click',()=>goStep(nextRound[round]));
+    bar.appendChild(btn2);
+    nb.appendChild(bar);
+    setTimeout(()=>toast(`${round} complete! Continue to ${nextLbl}`),150);
   }
 }
 
