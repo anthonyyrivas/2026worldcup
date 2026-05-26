@@ -479,8 +479,9 @@ if(!S.res) S.res={groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''};
 save();
 
 function ep(id){
-  if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},champion:'',runnerUp:'',hotTake:''};
-  if(S.preds[id].hotTake===undefined) S.preds[id].hotTake=''; // migrate old data
+  if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},fin:{},champion:'',runnerUp:'',hotTake:''};
+  if(S.preds[id].hotTake===undefined) S.preds[id].hotTake='';
+  if(S.preds[id].fin===undefined) S.preds[id].fin={};
   return S.preds[id];
 }
 
@@ -739,8 +740,8 @@ function completeness(pred){
   let tot=0,fil=0;
   GKEYS.forEach(g=>{tot+=3;const gp=pred.groups&&pred.groups[g];if(gp){if(gp.first)fil++;if(gp.second)fil++;if(gp.third)fil++;}});
   tot+=8;fil+=Math.min((pred.best3||[]).length,8);
-  const all={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{})};
-  tot+=31;fil+=Object.values(all).filter(Boolean).length;
+  const all={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{}),...(pred.fin||{})};
+  tot+=32;fil+=Object.values(all).filter(Boolean).length;
   tot+=2;if(pred.champion)fil++;if(pred.runnerUp)fil++;
   return Math.round(fil/tot*100);
 }
@@ -763,7 +764,7 @@ function stepDone(id,pred){
   if(id==='R16')return R16.every(m=>pred.r16&&pred.r16[m.id]);
   if(id==='QF')return QF.every(m=>pred.qf&&pred.qf[m.id]);
   if(id==='SF')return SF.every(m=>pred.sf&&pred.sf[m.id]);
-  if(id==='Final')return !!(pred.champion&&pred.runnerUp);
+  if(id==='Final')return !!(pred.fin&&pred.fin[104]);
   return false;
 }
 
@@ -787,14 +788,20 @@ function renderPred(){
 
   const lockHtml=locked?`<div class="warn" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">Predictions locked - World Cup started! <button class="btn btn-sm btn-wa" onclick="openShare('${CUR_USER}')">Share My Bracket</button></div>`:'';
 
+  const curStepIdx = STEPS.map(s=>s.id).indexOf(CUR_STEP);
+  const prevStep = curStepIdx > 0 ? STEPS[curStepIdx-1].id : null;
+
   wrap.innerHTML=`<progress max="100" value="${pct}"></progress>
-  <div class="prog-txt">${pct}% complete - <strong>${esc(user.name)}</strong> ${locked?'(locked)':'<span class="as-dot"></span>'}</div>
+  <div class="prog-txt">${pct}% complete — <strong>${esc(user.name)}</strong> ${locked?'(locked)':'<span class="as-dot"></span>'}</div>
   ${lockHtml}
   ${stepsHTML}
   <div id="step-body"></div>
-  ${!locked?`<div style="position:sticky;bottom:0;background:var(--navy);border-top:1px solid var(--subtle);padding:.55rem 0;display:flex;justify-content:flex-end;gap:.4rem;margin-top:.6rem">
-    <button class="btn btn-ghost btn-sm" onclick="clearStep()">Clear Step</button>
-    <button class="btn btn-wa btn-sm" onclick="openShare('${CUR_USER}')">Share Picks</button>
+  ${!locked?`<div style="position:sticky;bottom:0;background:var(--navy);border-top:1px solid var(--subtle);padding:.55rem 0;display:flex;justify-content:space-between;align-items:center;gap:.4rem;margin-top:.6rem">
+    <div style="display:flex;gap:.35rem">
+      ${prevStep?`<button class="btn btn-ghost btn-sm" id="back-btn">← Back</button>`:''}
+      <button class="btn btn-ghost btn-sm" onclick="clearStep()">↺ Clear</button>
+    </div>
+    <button class="btn btn-wa btn-sm" onclick="openShare('${CUR_USER}')">Share</button>
   </div>`:`<div style="display:flex;justify-content:center;gap:.45rem;margin-top:.7rem;flex-wrap:wrap">
     <button class="btn btn-wa" onclick="openShare('${CUR_USER}')">Share My Full Bracket</button>
     <button class="btn btn-ghost" onclick="openPubBracket()">View Public Bracket</button>
@@ -803,6 +810,10 @@ function renderPred(){
   wrap.querySelectorAll('.s-dot').forEach(dot=>{
     dot.addEventListener('click',()=>locked?toast('Predictions are locked - World Cup has started'):goStep(dot.dataset.step));
   });
+  if(prevStep) {
+    const backBtn = wrap.querySelector('#back-btn');
+    if(backBtn) backBtn.addEventListener('click',()=>goStep(prevStep));
+  }
   renderStepBody(pred,locked);
 }
 
@@ -810,10 +821,15 @@ function goStep(id){
   const pred=ep(CUR_USER);
   const order=STEPS.map(s=>s.id);
   const idx=order.indexOf(id);
-  for(let i=0;i<idx;i++){
-    if(order[i]==='groups'&&!stepDone('groups',pred)){toast('Complete all 12 groups first');return;}
-    if(order[i]==='best3'&&!stepDone('best3',pred)){toast('Pick your 8 best 3rd-place teams first');return;}
-  }
+  const curIdx=order.indexOf(CUR_STEP);
+
+  // Going backwards — always allowed
+  if(idx<curIdx){CUR_STEP=id;renderPred();return;}
+
+  // Going forward — only gate groups and best3
+  if(idx>0&&!stepDone('groups',pred)){toast('Complete all 12 groups first (pick 1st, 2nd & 3rd for each)');return;}
+  if(idx>1&&!stepDone('best3',pred)){toast('Pick your 8 best 3rd-place teams first');return;}
+  // KO steps: allow jumping forward freely so user can edit any round
   CUR_STEP=id;renderPred();
 }
 
@@ -1108,51 +1124,97 @@ function handleKO(e){
   save();renderPred();
 }
 
-/* ---- FINAL PICKS ---- */
+/* ---- FINAL MATCH (bracket style, no dropdowns) ---- */
 function renderFinal(pred,body,locked){
-  const sfPicks=pred.sf||{};
-  const fin1=sfPicks[101]||null,fin2=sfPicks[102]||null;
-  const allDone=pred.champion&&pred.runnerUp;
+  // The Final match (M104): winner of SF101 vs winner of SF102
+  const t1=pred.sf&&pred.sf[101]||null;
+  const t2=pred.sf&&pred.sf[102]||null;
+  const finPick=(pred.fin&&pred.fin[104])||null; // the champion pick
+  // runner-up = the other finalist
+  const i1=ti(t1),i2=ti(t2);
   const hotTake=pred.hotTake||'';
-  body.innerHTML=`<div class="info">Final step! Pick your champion and runner-up. Bonus +8 pts for correctly predicting any finalist.</div>
-  <div class="finals-grid">
-    <div class="final-card"><h3>Champion</h3>
-      <select id="pick-champ" style="width:100%" ${locked?'disabled style="opacity:.5"':''}>
-        <option value="">-- pick champion --</option>
-        ${fin1?`<option value="${fin1}" ${pred.champion===fin1?'selected':''}>${ti(fin1).f} ${esc(dname(fin1))} (your SF pick)</option>`:''}
-        ${fin2&&fin2!==fin1?`<option value="${fin2}" ${pred.champion===fin2?'selected':''}>${ti(fin2).f} ${esc(dname(fin2))} (your SF pick)</option>`:''}
-        <optgroup label="All teams">${ALL_TEAMS.map(t=>`<option value="${t.n}" ${pred.champion===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</optgroup>
-      </select></div>
-    <div class="final-card"><h3>Runner-Up</h3>
-      <select id="pick-runner" style="width:100%" ${locked?'disabled style="opacity:.5"':''}>
-        <option value="">-- pick runner-up --</option>
-        ${fin1?`<option value="${fin1}" ${pred.runnerUp===fin1?'selected':''}>${ti(fin1).f} ${esc(dname(fin1))} (your SF pick)</option>`:''}
-        ${fin2&&fin2!==fin1?`<option value="${fin2}" ${pred.runnerUp===fin2?'selected':''}>${ti(fin2).f} ${esc(dname(fin2))} (your SF pick)</option>`:''}
-        <optgroup label="All teams">${ALL_TEAMS.map(t=>`<option value="${t.n}" ${pred.runnerUp===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</optgroup>
-      </select></div>
-  </div>
-  <div class="hot-take-wrap">
-    <h3>🔥 Hot Take</h3>
+  const allDone=!!(finPick&&hotTake); // bracket done when final picked (hot take optional)
+  const bracketDone=!!finPick;
+
+  const frag=document.createDocumentFragment();
+  const infoEl=document.createElement('div');
+  infoEl.className='info';
+  infoEl.innerHTML=`The Final! Click the team you think wins the World Cup. The winner is your <strong>Champion</strong>, the loser is your <strong>Runner-Up</strong>. Bonus +8 pts for correctly predicting any finalist.`;
+  frag.appendChild(infoEl);
+
+  // Big final match card
+  const matchWrap=document.createElement('div');
+  matchWrap.style.cssText='display:flex;justify-content:center;margin-bottom:1rem';
+  const card=document.createElement('div');
+  card.className='b-match';
+  card.style.cssText='width:100%;max-width:320px;border-radius:12px;overflow:hidden;border-color:var(--border)';
+
+  const lbl=document.createElement('div');
+  lbl.className='b-match-lbl';
+  lbl.style.cssText='background:var(--n3);padding:.4rem .75rem;font-size:.7rem;color:var(--gold);font-family:"Bebas Neue",sans-serif;letter-spacing:.1em';
+  lbl.innerHTML=`<span>THE FINAL</span><span style="color:var(--dim);font-size:.58rem">M104</span>`;
+  card.appendChild(lbl);
+
+  [t1,t2].forEach(t=>{
+    const info=ti(t);
+    const row=document.createElement('div');
+    row.className='b-team'+(finPick===t&&t?' sel':'')+(t?'':' tbd');
+    row.style.cssText='padding:.7rem .75rem;'; // bigger rows for the final
+    row.innerHTML=`<span class="b-flag" style="font-size:1.3rem;width:1.5rem">${info.f}</span><span class="b-name" style="font-size:.95rem;font-weight:500">${t?esc(dname(t)):'TBD'}</span><span class="b-chk" style="font-size:.85rem">✓</span>`;
+    if(t&&!locked){
+      row.dataset.match=104; row.dataset.team=t; row.dataset.pk='fin';
+      row.addEventListener('click',handleFinalPick);
+    } else if(locked) row.style.cursor='not-allowed';
+    card.appendChild(row);
+  });
+  matchWrap.appendChild(card);
+  frag.appendChild(matchWrap);
+
+  // Show champion/runner-up derived result
+  if(finPick){
+    const loser=finPick===t1?t2:t1;
+    const resultEl=document.createElement('div');
+    resultEl.style.cssText='display:flex;justify-content:center;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap';
+    resultEl.innerHTML=`
+      <div style="text-align:center;background:var(--n2);border:1px solid var(--border);border-radius:10px;padding:.85rem 1.2rem;min-width:120px">
+        <div style="font-size:1.5rem">${ti(finPick).f}</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:.8rem;color:var(--gold);letter-spacing:.1em;margin-top:.3rem">Champion</div>
+        <div style="font-size:.85rem;font-weight:600;margin-top:.1rem">${esc(dname(finPick))}</div>
+      </div>
+      ${loser?`<div style="text-align:center;background:var(--n2);border:1px solid var(--subtle);border-radius:10px;padding:.85rem 1.2rem;min-width:120px">
+        <div style="font-size:1.5rem">${ti(loser).f}</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:.8rem;color:var(--muted);letter-spacing:.1em;margin-top:.3rem">Runner-Up</div>
+        <div style="font-size:.85rem;font-weight:600;margin-top:.1rem">${esc(dname(loser))}</div>
+      </div>`:''}`;
+    frag.appendChild(resultEl);
+  }
+
+  // Hot take box
+  const htWrap=document.createElement('div');
+  htWrap.className='hot-take-wrap';
+  htWrap.innerHTML=`<h3>🔥 Hot Take</h3>
     <p>What's your boldest prediction? Write something controversial — it gets shared with your bracket and locked in when the tournament starts.</p>
     ${locked
       ? hotTake
         ? `<div class="hot-take-display">"${esc(hotTake)}"</div>`
         : `<div class="hot-take-display" style="color:var(--dim);font-style:italic">No hot take submitted.</div>`
-      : `<textarea id="hot-take-input" class="hot-take-input" maxlength="120" placeholder='e.g. "France gets eliminated in the group stage" or "Brazil wins it all from Group C"'>${esc(hotTake)}</textarea>
+      : `<textarea id="hot-take-input" class="hot-take-input" maxlength="120" placeholder='e.g. "France gets eliminated in the group stage"'>${esc(hotTake)}</textarea>
          <div class="hot-take-char"><span id="hot-take-count">${hotTake.length}</span>/120</div>`
-    }
-  </div>
-  ${allDone?`<div class="ok" style="text-align:center;margin-top:.75rem">Bracket 100% complete!</div>`:''}`;
+    }`;
+  frag.appendChild(htWrap);
+
+  if(bracketDone){
+    const doneEl=document.createElement('div');
+    doneEl.className='ok';
+    doneEl.style.cssText='text-align:center;margin-top:.75rem';
+    doneEl.textContent='Bracket 100% complete! Share your picks on WhatsApp.';
+    frag.appendChild(doneEl);
+  }
+
+  body.innerHTML='';
+  body.appendChild(frag);
 
   if(!locked){
-    document.getElementById('pick-champ').addEventListener('change',function(){
-      ep(CUR_USER).champion=this.value||'';save();renderPred();
-      checkFinalDone();
-    });
-    document.getElementById('pick-runner').addEventListener('change',function(){
-      ep(CUR_USER).runnerUp=this.value||'';save();renderPred();
-      checkFinalDone();
-    });
     const htInput=document.getElementById('hot-take-input');
     if(htInput){
       htInput.addEventListener('input',function(){
@@ -1165,16 +1227,35 @@ function renderFinal(pred,body,locked){
     }
   }
 }
+
+function handleFinalPick(e){
+  if(!CUR_USER)return;
+  const {match,team}=e.currentTarget.dataset;
+  const pred=ep(CUR_USER);
+  if(!pred.fin) pred.fin={};
+  // Toggle: clicking same team deselects
+  pred.fin[Number(match)]=pred.fin[Number(match)]===team?'':team;
+  // Auto-derive champion and runner-up
+  const t1=pred.sf&&pred.sf[101]||null;
+  const t2=pred.sf&&pred.sf[102]||null;
+  const winner=pred.fin[104]||null;
+  pred.champion=winner||'';
+  pred.runnerUp=winner?(winner===t1?t2:t1)||'':'';
+  save();
+  if(winner) setTimeout(()=>checkFinalDone(),200);
+  else renderPred();
+}
 function checkFinalDone(){
   const pred=ep(CUR_USER);
-  if(pred.champion&&pred.runnerUp){
-    setTimeout(()=>showStepPopup('🏆','Bracket Complete!','Your full World Cup 2026 prediction is locked in! Share your bracket with friends on WhatsApp and see who gets the best score.',null,'Done!'),300);
+  if(pred.fin&&pred.fin[104]){
+    renderPred(); // re-render to show champion/runner-up result
+    setTimeout(()=>showStepPopup('🏆','Bracket Complete!','Your full World Cup 2026 prediction is locked in! Share your bracket with friends on WhatsApp.',null,'Done — Share My Picks!'),400);
   }
 }
 function clearStep(){
   if(!CUR_USER||isLocked()){toast('Predictions are locked');return;}
   const pred=ep(CUR_USER);
-  const map={groups:()=>{pred.groups={};pred.best3=[];},best3:()=>{pred.best3=[];},R32:()=>{pred.r32={};},R16:()=>{pred.r16={};},QF:()=>{pred.qf={};},SF:()=>{pred.sf={};},Final:()=>{pred.champion='';pred.runnerUp='';}};
+  const map={groups:()=>{pred.groups={};pred.best3=[];},best3:()=>{pred.best3=[];},R32:()=>{pred.r32={};},R16:()=>{pred.r16={};},QF:()=>{pred.qf={};},SF:()=>{pred.sf={};},Final:()=>{pred.fin={};pred.champion='';pred.runnerUp='';}};
   if(!confirm('Clear '+CUR_STEP+' picks?'))return;
   (map[CUR_STEP]||(() => {}))();save();renderPred();toast('Cleared');
 }
