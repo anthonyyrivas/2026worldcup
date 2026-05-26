@@ -1925,23 +1925,31 @@ async function runFetch(force=false){
   try{
     flog('Calling fetch proxy...','info');
 
-    // Use Vercel serverless function as proxy (avoids CORS)
-    // The function is at /api/fetch-results in the same Vercel deployment
-    const resp = await fetch('/api/fetch-results', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt })
-    });
+    let resp;
+    try {
+      resp = await fetch('/api/fetch-results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      });
+    } catch(networkErr) {
+      // Network-level failure — log the real error
+      throw new Error('Network error calling proxy: ' + networkErr.message + '. Are you on the live Vercel site (not localhost)?');
+    }
+
+    flog('Got HTTP ' + resp.status + ' from proxy','info');
 
     if(!resp.ok){
       const errData = await resp.json().catch(()=>({error:'Unknown error'}));
-      // Specific helpful messages
+      flog(`HTTP ${resp.status} from proxy: ${JSON.stringify(errData)}`,'warn');
       if(resp.status === 404){
-        throw new Error('API proxy not found. Make sure api/fetch-results.js is deployed to Vercel alongside index.html.');
-      } else if(resp.status === 500 && errData.error?.includes('ANTHROPIC_API_KEY')){
-        throw new Error('ANTHROPIC_API_KEY not set. Add it to Vercel: Project Settings → Environment Variables → ANTHROPIC_API_KEY');
+        throw new Error('HTTP 404 — api/fetch-results not found. Check vercel.json is updated and redeploy.');
+      } else if(resp.status === 405){
+        throw new Error('HTTP 405 — function found but rejected request method.');
+      } else if(resp.status === 500 && (errData.error||'').includes('ANTHROPIC_API_KEY')){
+        throw new Error('ANTHROPIC_API_KEY not set in Vercel Environment Variables.');
       }
-      throw new Error(`Server error ${resp.status}: ${errData.error||'Unknown'}`);
+      throw new Error(`HTTP ${resp.status}: ${errData.error||'Unknown error'}`);
     }
 
     const result = await resp.json();
