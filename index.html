@@ -1941,15 +1941,19 @@ async function runFetch(force=false){
 
     if(!resp.ok){
       const errData = await resp.json().catch(()=>({error:'Unknown error'}));
-      flog(`HTTP ${resp.status} from proxy: ${JSON.stringify(errData)}`,'warn');
-      if(resp.status === 404){
-        throw new Error('HTTP 404 — api/fetch-results not found. Check vercel.json is updated and redeploy.');
-      } else if(resp.status === 405){
-        throw new Error('HTTP 405 — function found but rejected request method.');
-      } else if(resp.status === 500 && (errData.error||'').includes('ANTHROPIC_API_KEY')){
+      const errStr = typeof errData.error === 'string' ? errData.error : JSON.stringify(errData);
+      flog('Response body: ' + errStr.slice(0,200), 'warn');
+      // Check if it's actually an Anthropic error wrapped in our proxy response
+      if(errStr.includes('not_found_error') && errStr.includes('model')){
+        throw new Error('Model not found — API key works but model name is wrong. Update api/fetch-results.js.');
+      } else if(errStr.includes('ANTHROPIC_API_KEY') || errStr.includes('not configured')){
         throw new Error('ANTHROPIC_API_KEY not set in Vercel Environment Variables.');
+      } else if(errStr.includes('authentication') || errStr.includes('invalid_api_key')){
+        throw new Error('Invalid API key — check ANTHROPIC_API_KEY in Vercel settings.');
+      } else if(resp.status === 404 && !errStr.includes('type')){
+        throw new Error('HTTP 404 — api/fetch-results not found on server.');
       }
-      throw new Error(`HTTP ${resp.status}: ${errData.error||'Unknown error'}`);
+      throw new Error('HTTP ' + resp.status + ': ' + errStr.slice(0,150));
     }
 
     const result = await resp.json();
