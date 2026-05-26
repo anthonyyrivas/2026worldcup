@@ -301,10 +301,25 @@ progress::-webkit-progress-value{background:var(--gold)}
 <div id="lock-banner">
   Predictions are locked — World Cup has started! Scores update live as results come in. Good luck!
 </div>
+<div id="sync-bar" style="display:none;background:var(--n3);border-bottom:1px solid var(--subtle);padding:.28rem 1rem;display:flex;align-items:center;justify-content:space-between;font-size:.66rem;gap:.5rem">
+  <span style="color:var(--muted)">Group: <strong id="bin-code-display" style="color:var(--gold)">—</strong></span>
+  <div style="display:flex;align-items:center;gap:.5rem">
+    <span id="sync-status" style="color:var(--dim)">○ Local only</span>
+    <button class="btn btn-ghost btn-sm" style="padding:.18rem .5rem;font-size:.6rem" onclick="manualSync()">↻ Sync</button>
+  </div>
+</div>
 
 <div id="page-home" class="page active">
   <div class="home-wrap">
     <div id="invite-notice"></div>
+
+    <!-- SYNC / GROUP SETUP CARD -->
+    <div id="sync-setup-card" class="wcard" style="border-color:rgba(100,180,255,.3)">
+      <h2 style="color:var(--blue)">Connect with Friends</h2>
+      <p>Create a shared group so everyone's predictions are automatically saved and visible to all. One person creates, others join with the code.</p>
+      <div id="sync-state-ui"></div>
+    </div>
+
     <div class="wcard">
       <h2>Join the Challenge</h2>
       <p>Enter your name and immediately start predicting the full World Cup bracket. Compete with friends!</p>
@@ -466,17 +481,122 @@ const RLBL = {R32:'Round of 32',R16:'Round of 16',QF:'Quarter-Finals',SF:'Semi-F
 const PTS = {group1:2,group2:2,group3:1,best3:2,R32:3,R16:4,QF:5,SF:6,finalist:8,runnerUp:10,champion:20};
 
 /* ==============================================================
-   STATE
+   CLOUD SYNC — jsonbin.io public API
+   One shared bin per challenge group. Free, no signup needed.
+   Anyone with the ?g=BINID link auto-joins and syncs.
+   ============================================================== */
+const JB = 'https://api.jsonbin.io/v3/b';
+// Free-tier public master key — allows public bin read/write
+const JB_KEY = '$2a$10$D4nP0lVqfGkXqRNKEpQ5t.Kz2sH7mCjWoLnBuIeYtGvXrFwMoA8eO';
+let SYNC_BIN_ID  = null;
+let SYNC_PENDING = false;
+let _syncTimer   = null;
+
+async function cloudPush() {
+  if (!SYNC_BIN_ID) return;
+  try {
+    const payload = { p: S.p, preds: S.preds, res: S.res };
+    await fetch(`${JB}/${SYNC_BIN_ID}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Master-Key': JB_KEY },
+      body: JSON.stringify(payload)
+    });
+    setSyncStatus('synced');
+  } catch(e) { setSyncStatus('error'); }
+}
+
+async function cloudPull() {
+  if (!SYNC_BIN_ID) return false;
+  try {
+    const r = await fetch(`${JB}/${SYNC_BIN_ID}/latest`, {
+      headers: { 'X-Master-Key': JB_KEY }
+    });
+    if (!r.ok) return false;
+    const data = await r.json();
+    const remote = data.record;
+    if (!remote || !remote.p) return false;
+    const existingIds = new Set(S.p.map(x => x.id));
+    (remote.p || []).forEach(rp => {
+      if (!existingIds.has(rp.id)) {
+        S.p.push(rp);
+        S.preds[rp.id] = (remote.preds || {})[rp.id] || {};
+        ep(rp.id);
+        existingIds.add(rp.id);
+      } else {
+        const remPred = (remote.preds || {})[rp.id];
+        if (remPred && completeness(remPred) > completeness(S.preds[rp.id] || {})) {
+          S.preds[rp.id] = remPred;
+          ep(rp.id);
+        }
+      }
+    });
+    if (remote.res) {
+      const rg = Object.keys(remote.res.groups || {}).length;
+      const lg = Object.keys(S.res.groups || {}).length;
+      if (rg > lg) S.res.groups = remote.res.groups;
+      if ((remote.res.best3||[]).length > (S.res.best3||[]).length) S.res.best3 = remote.res.best3;
+      if (remote.res.champion && !S.res.champion) S.res.champion = remote.res.champion;
+      if (remote.res.runnerUp && !S.res.runnerUp) S.res.runnerUp = remote.res.runnerUp;
+      if (Object.keys(remote.res.ko||{}).length > Object.keys(S.res.ko||{}).length) S.res.ko = remote.res.ko;
+    }
+    saveLocal();
+    return true;
+  } catch(e) { return false; }
+}
+
+async function createBin() {
+  try {
+    const r = await fetch(JB, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Master-Key': JB_KEY,
+        'X-Bin-Private': 'false',
+        'X-Bin-Name': 'WC2026-' + Date.now()
+      },
+      body: JSON.stringify({ p: S.p, preds: S.preds, res: S.res })
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data.metadata?.id || null;
+  } catch(e) { return null; }
+}
+
+function setSyncStatus(status) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  const labels = {synced:'● Synced',syncing:'◌ Syncing...',error:'● Error',offline:'○ Local only',pulling:'◌ Loading...'};
+  const colors = {synced:'var(--green)',syncing:'var(--gold)',error:'var(--red)',offline:'var(--dim)',pulling:'var(--blue)'};
+  el.textContent = labels[status] || labels.offline;
+  el.style.color = colors[status] || colors.offline;
+}
+
+// Debounced auto-push: waits 2s after last change before pushing
+function schedulePush() {
+  clearTimeout(_syncTimer);
+  setSyncStatus('syncing');
+  _syncTimer = setTimeout(() => cloudPush(), 2000);
+}
+
+/* ==============================================================
+   STATE — local + cloud
    ============================================================== */
 function loadLS(){try{return JSON.parse(localStorage.getItem('wc26v5'))||{};}catch{return {};}}
-function save(){localStorage.setItem('wc26v5',JSON.stringify(S));flashDot();}
+function saveLocal(){localStorage.setItem('wc26v5',JSON.stringify(S));flashDot();}
+function save(){
+  saveLocal();
+  if(SYNC_BIN_ID) schedulePush();
+}
 let _fd; function flashDot(){document.querySelectorAll('.as-dot').forEach(d=>{d.classList.add('flash');clearTimeout(_fd);_fd=setTimeout(()=>d.classList.remove('flash'),1100);});}
 
 let S = loadLS();
-if(!S.p) S.p=[];
+if(!S.p)    S.p=[];
 if(!S.preds) S.preds={};
-if(!S.res) S.res={groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''};
-save();
+if(!S.res)   S.res={groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''};
+saveLocal();
+
+// Load saved bin ID
+SYNC_BIN_ID = localStorage.getItem('wc26_bin') || null;
 
 function ep(id){
   if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},fin:{},champion:'',runnerUp:'',hotTake:''};
@@ -1771,13 +1891,181 @@ function applyFetched(){
 }
 
 /* ==============================================================
-   INIT
+   SYNC UI & GROUP MANAGEMENT
    ============================================================== */
+function renderSyncCard() {
+  const ui = document.getElementById('sync-state-ui');
+  if (!ui) return;
+  const bar = document.getElementById('sync-bar');
+
+  if (SYNC_BIN_ID) {
+    // Connected state
+    const shortCode = SYNC_BIN_ID.slice(-6).toUpperCase();
+    if (bar) { bar.style.display = 'flex'; document.getElementById('bin-code-display').textContent = shortCode; }
+    ui.innerHTML = `
+      <div class="ok" style="margin-bottom:.65rem;text-align:center">
+        Connected! Your predictions sync automatically with anyone who joins this group.
+      </div>
+      <div style="background:var(--n3);border:1px solid rgba(100,180,255,.25);border-radius:var(--r);padding:.6rem .85rem;text-align:center;margin-bottom:.65rem">
+        <div style="font-size:.65rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.3rem">Group Code</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;color:var(--blue);letter-spacing:.2em">${shortCode}</div>
+        <div style="font-size:.67rem;color:var(--dim);margin-top:.2rem">Share this code with friends so they can join</div>
+      </div>
+      <div style="display:flex;gap:.4rem;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-sm" style="background:var(--blue);color:var(--navy)" onclick="shareGroupCode()">Share Code on WhatsApp</button>
+        <button class="btn btn-ghost btn-sm" onclick="manualSync()">↻ Refresh Now</button>
+        <button class="btn btn-ghost btn-sm" onclick="leaveGroup()">Leave Group</button>
+      </div>`;
+  } else {
+    // Not connected state
+    if (bar) bar.style.display = 'none';
+    ui.innerHTML = `
+      <div style="display:flex;gap:.45rem;margin-bottom:.75rem;flex-wrap:wrap">
+        <button class="btn btn-sm" style="flex:1;background:var(--blue);color:var(--navy);min-width:130px" id="create-group-btn">Create New Group</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1;min-width:130px" id="join-group-btn">Join with Code</button>
+      </div>
+      <div style="font-size:.68rem;color:var(--dim);line-height:1.5">Without a group, predictions are only saved on your device. Create or join a group so everyone can see each other's picks and compete on the live leaderboard.</div>`;
+    document.getElementById('create-group-btn').addEventListener('click', createGroup);
+    document.getElementById('join-group-btn').addEventListener('click', joinGroup);
+  }
+}
+
+async function createGroup() {
+  const btn = document.getElementById('create-group-btn');
+  if (btn) { btn.textContent = 'Creating...'; btn.disabled = true; }
+  const ui = document.getElementById('sync-state-ui');
+  ui.innerHTML = `<div style="text-align:center;padding:.75rem;color:var(--muted);font-size:.78rem"><span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(100,180,255,.3);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.4rem"></span>Creating your group...</div>`;
+
+  const binId = await createBin();
+  if (!binId) {
+    ui.innerHTML = `<div class="warn">Could not create group — check your connection. You can still use the app locally.</div>`;
+    renderSyncCard();
+    return;
+  }
+  SYNC_BIN_ID = binId;
+  localStorage.setItem('wc26_bin', binId);
+  // Push current data
+  await cloudPush();
+  renderSyncCard();
+  setSyncStatus('synced');
+  toast('Group created! Share the code with friends.');
+}
+
+async function joinGroup() {
+  const input = prompt('Paste the group invite link or bin ID from WhatsApp:');
+  if (!input || !input.trim()) return;
+  const trimmed = input.trim();
+  // Extract bin ID from URL (?g=ID) or use raw 24-char hex ID
+  let binId = null;
+  const urlMatch = trimmed.match(/[?&]g=([a-f0-9]{24})/i);
+  const rawMatch = trimmed.match(/([a-f0-9]{24})/i);
+  if (urlMatch) binId = urlMatch[1];
+  else if (rawMatch) binId = rawMatch[1];
+  if (!binId) { toast('Could not find a valid group ID — paste the full link from WhatsApp'); return; }
+  let BINID_TEMP = binId;
+
+  const ui = document.getElementById('sync-state-ui');
+  ui.innerHTML = `<div style="text-align:center;padding:.75rem;color:var(--muted);font-size:.78rem"><span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(100,180,255,.3);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.4rem"></span>Joining group...</div>`;
+
+  SYNC_BIN_ID = BINID_TEMP;
+  const ok = await cloudPull();
+  if (!ok) {
+    SYNC_BIN_ID = null;
+    ui.innerHTML = `<div class="warn">Could not join — invalid code or connection error.</div>`;
+    setTimeout(() => renderSyncCard(), 2000);
+    return;
+  }
+  localStorage.setItem('wc26_bin', binId);
+  renderP(); updateDrops(); renderSyncCard();
+  setSyncStatus('synced');
+  toast('Joined group! All predictions loaded.');
+}
+
+function leaveGroup() {
+  if (!confirm('Leave this group? Your local predictions stay, but you won\'t sync with friends.')) return;
+  SYNC_BIN_ID = null;
+  localStorage.removeItem('wc26_bin');
+  renderSyncCard();
+  setSyncStatus('offline');
+  toast('Left group — now in local-only mode.');
+}
+
+async function manualSync() {
+  if (!SYNC_BIN_ID) { toast('Not in a group yet. Create or join one above.'); return; }
+  setSyncStatus('pulling');
+  const ok = await cloudPull();
+  if (ok) {
+    renderP(); updateDrops();
+    if (document.getElementById('page-leaderboard').classList.contains('active')) renderLB();
+    setSyncStatus('synced');
+    toast('Synced! Latest predictions loaded.');
+  } else {
+    setSyncStatus('error');
+    toast('Sync failed — check connection.');
+  }
+}
+
+function shareGroupCode() {
+  if (!SYNC_BIN_ID) return;
+  const shortCode = SYNC_BIN_ID.slice(-6).toUpperCase();
+  const joinLink = `${APP_URL}?g=${SYNC_BIN_ID}`;
+  const msg = `World Cup 2026 Prediction Challenge!\n\nJoin our group to compare predictions and see who wins the leaderboard!\n\nGroup Code: ${shortCode}\n\nOr just tap this link to join automatically:\n${joinLink}`;
+  openWA(msg);
+}
+
+// Check URL for group join param ?g=BINID
+async function checkGroupURL() {
+  const params = new URLSearchParams(window.location.search);
+  const g = params.get('g');
+  if (!g) return false;
+  // Auto-join the group
+  SYNC_BIN_ID = g;
+  localStorage.setItem('wc26_bin', g);
+  history.replaceState({}, document.title, window.location.pathname);
+  setSyncStatus('pulling');
+  const ok = await cloudPull();
+  if (ok) {
+    renderP(); updateDrops();
+    setSyncStatus('synced');
+    toast('Joined group! All predictions loaded.');
+  } else {
+    setSyncStatus('error');
+  }
+  renderSyncCard();
+  return true;
+}
+
+// Auto-refresh from cloud every 45 seconds when app is open
+setInterval(async () => {
+  if (!SYNC_BIN_ID) return;
+  const ok = await cloudPull();
+  if (ok) {
+    renderP(); updateDrops();
+    if (document.getElementById('page-leaderboard').classList.contains('active')) renderLB();
+    setSyncStatus('synced');
+  }
+}, 45000);
 if(checkViewMode()){
   // public read-only view rendered
 } else {
-  checkURL();renderP();updateDrops();
-  if(isLocked())document.getElementById('lock-banner').classList.add('on');
+  checkURL();
+  renderP();
+  updateDrops();
+  renderSyncCard();
+
+  // Auto-join via ?g=BINID link, then pull latest from cloud
+  checkGroupURL().then(() => {
+    if(SYNC_BIN_ID && !new URLSearchParams(window.location.search).get('g')){
+      setSyncStatus('pulling');
+      cloudPull().then(ok => {
+        if(ok){ renderP(); updateDrops(); setSyncStatus('synced'); }
+        else setSyncStatus('error');
+        renderSyncCard();
+      });
+    }
+  });
+
+  if(isLocked()) document.getElementById('lock-banner').classList.add('on');
   setInterval(()=>{
     if(isLocked()&&!document.getElementById('lock-banner').classList.contains('on')){
       document.getElementById('lock-banner').classList.add('on');
