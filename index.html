@@ -37,7 +37,7 @@ nav button:hover{color:var(--text)}
 #lock-banner.on{display:block}
 
 /* ---- PAGES ---- */
-.page{display:none;padding:.85rem;max-width:1280px;margin:0 auto}
+.page{display:none;padding:.85rem;max-width:1280px;margin:0 auto;overflow-x:hidden}
 .page.active{display:block}
 
 /* ---- COMMON ---- */
@@ -132,11 +132,11 @@ progress::-webkit-progress-value{background:var(--gold)}
 .b3-chk{color:var(--blue);font-size:.7rem;opacity:0;margin-left:auto}.b3-item.sel .b3-chk{opacity:1}
 
 /* ---- VISUAL BRACKET ---- */
-.bracket-container{overflow-x:auto;padding:1rem 0 2rem;-webkit-overflow-scrolling:touch}
-.bracket-container::-webkit-scrollbar{height:5px}
+.bracket-container{overflow-x:auto;overflow-y:hidden;padding:.75rem 0 1.5rem;-webkit-overflow-scrolling:touch;touch-action:pan-x;/* prevent page vertical scroll fighting bracket horizontal */overscroll-behavior-x:contain;overscroll-behavior-y:none;max-width:100%}
+.bracket-container::-webkit-scrollbar{height:4px}
 .bracket-container::-webkit-scrollbar-track{background:var(--n3)}
 .bracket-container::-webkit-scrollbar-thumb{background:var(--gold);border-radius:3px}
-.bracket-inner{display:flex;gap:0;align-items:stretch;min-width:fit-content;position:relative}
+.bracket-inner{display:flex;gap:0;align-items:flex-start;min-width:fit-content;position:relative}
 .b-col{display:flex;flex-direction:column;justify-content:space-around;min-width:162px;flex-shrink:0}
 .b-col-hdr{font-family:'Bebas Neue',sans-serif;font-size:.78rem;color:var(--gold);letter-spacing:.1em;text-align:center;padding:.3rem .4rem;background:var(--n3);border-bottom:1px solid var(--border);border-radius:6px 6px 0 0;margin-bottom:.3rem;white-space:nowrap}
 .b-match-wrap{position:relative;display:flex;align-items:center}
@@ -413,7 +413,10 @@ progress::-webkit-progress-value{background:var(--gold)}
     <span class="step-popup-icon" id="sp-icon"></span>
     <h3 id="sp-title"></h3>
     <p id="sp-text"></p>
-    <button class="btn" id="sp-btn" onclick="closeStepPopup()">Continue</button>
+    <div style="display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap">
+      <button class="btn" id="sp-btn" onclick="closeStepPopup()">Continue</button>
+      <button class="btn btn-ghost" onclick="stayAndEdit()" style="font-size:.75rem">Stay & Edit</button>
+    </div>
   </div>
 </div>
 
@@ -739,9 +742,16 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function ti(n){if(!n)return{n:'TBD',f:''};return ALL_TEAMS.find(t=>t.n===n)||{n,f:''};}
 let _tt; function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>el.classList.remove('show'),2500);}
 
-/* Step-complete popup */
+/* Step-complete popup — only fires once per step per session */
 let _spNextStep = null;
+const _shownPopups = new Set(); // track which steps already showed popup this session
+
 function showStepPopup(icon, title, text, nextStepId, nextLabel) {
+  // Don't show if already shown for this step this session
+  const key = `${CUR_USER}_${nextStepId || 'final'}`;
+  if (_shownPopups.has(key)) return;
+  _shownPopups.add(key);
+
   _spNextStep = nextStepId;
   document.getElementById('sp-icon').textContent = icon;
   document.getElementById('sp-title').textContent = title;
@@ -750,12 +760,21 @@ function showStepPopup(icon, title, text, nextStepId, nextLabel) {
   btn.textContent = nextLabel || 'Continue';
   document.getElementById('step-popup').style.display = 'flex';
 }
+
 function closeStepPopup() {
   document.getElementById('step-popup').style.display = 'none';
   if (_spNextStep) {
     goStep(_spNextStep);
     _spNextStep = null;
   }
+}
+
+function stayAndEdit() {
+  // Close popup, stay on current step to allow editing
+  document.getElementById('step-popup').style.display = 'none';
+  _spNextStep = null;
+  // Show a subtle toast so they know they can edit
+  toast('Editing — tap any team to change your pick, then use the step dots to navigate');
 }
 
 function enc(o){try{return btoa(unescape(encodeURIComponent(JSON.stringify(o))));}catch{return '';}}
@@ -875,7 +894,12 @@ function stepDone(id,pred){
 }
 
 function initPredict(){updateDrops();if(CUR_USER&&S.p.find(p=>p.id===CUR_USER)){document.getElementById('pred-sel').value=CUR_USER;renderPred();}}
-function onUserChange(){CUR_USER=document.getElementById('pred-sel').value;CUR_STEP='groups';renderPred();}
+function onUserChange(){
+  CUR_USER=document.getElementById('pred-sel').value;
+  CUR_STEP='groups';
+  _shownPopups.clear(); // reset popup state for new user
+  renderPred();
+}
 
 function renderPred(){
   const wrap=document.getElementById('pred-wrap');
@@ -1354,7 +1378,7 @@ function handleFinalPick(e){
 function checkFinalDone(){
   const pred=ep(CUR_USER);
   if(pred.fin&&pred.fin[104]){
-    renderPred(); // re-render to show champion/runner-up result
+    renderPred();
     setTimeout(()=>showStepPopup('🏆','Bracket Complete!','Your full World Cup 2026 prediction is locked in! Share your bracket with friends on WhatsApp.',null,'Done — Share My Picks!'),400);
   }
 }
