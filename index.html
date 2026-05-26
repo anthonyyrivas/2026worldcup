@@ -1783,17 +1783,24 @@ function renderAdmin(){
   </div>`;
   html+=`<div class="fetch-panel">
     <h3>Auto-Fetch Live Results</h3>
-    <p>From June 11, tap Fetch Results and Claude will search the web for current standings and knockout results, updating everyone's scores automatically.</p>
+    <p>From June 11, tap <strong>Fetch Latest Results</strong> and Claude will search the web for current standings and knockout results, then update everyone's scores automatically.</p>
+    <div class="info" style="font-size:.7rem;margin-bottom:.65rem">
+      <strong>One-time Vercel setup needed:</strong><br>
+      1. In your Vercel project → <strong>Settings → Environment Variables</strong><br>
+      2. Add: <code style="background:var(--navy);padding:.1rem .3rem;border-radius:3px">ANTHROPIC_API_KEY</code> = your key from <strong>console.anthropic.com</strong><br>
+      3. Make sure <strong>api/fetch-results.js</strong> is deployed alongside index.html<br>
+      4. Redeploy — then this button will work on June 11!
+    </div>
     <div style="display:flex;gap:.42rem;flex-wrap:wrap;align-items:center">
-      <button class="btn" id="fetch-btn" ${kickoffPast?'':'style="opacity:.5;cursor:not-allowed" disabled'}>${kickoffPast?'Fetch Latest Results':'Available from June 11'}</button>
-      <button class="btn btn-ghost btn-sm" id="fetch-force-btn">Test Fetch</button>
+      <button class="btn" id="fetch-btn" ${kickoffPast?'':'style="opacity:.5;cursor:not-allowed" disabled'}>${kickoffPast?'🔄 Fetch Latest Results':'⏳ Available from June 11'}</button>
+      <button class="btn btn-ghost btn-sm" id="fetch-force-btn">Test Now</button>
       <span id="fetch-status" style="font-size:.68rem;color:var(--muted)"></span>
     </div>
     <div class="fetch-log" id="fetch-log"></div>
-    <div class="fetch-preview" id="fetch-preview"><h4>Fetched Results - Review Before Applying</h4>
+    <div class="fetch-preview" id="fetch-preview"><h4>Fetched Results — Review Before Applying</h4>
       <div id="fetch-preview-body"></div>
       <div style="display:flex;gap:.42rem;margin-top:.62rem;flex-wrap:wrap">
-        <button class="btn" id="fetch-apply">Apply All Results</button>
+        <button class="btn" id="fetch-apply">✅ Apply All Results</button>
         <button class="btn btn-ghost btn-sm" id="fetch-discard">Discard</button>
       </div></div>
   </div>
@@ -1910,28 +1917,63 @@ async function runFetch(force=false){
   const log=document.getElementById('fetch-log');if(log){log.innerHTML='';log.classList.remove('on');}
   document.getElementById('fetch-preview')?.classList.remove('on');_fetchData=null;
   fstatus('<span style="display:inline-flex;align-items:center;gap:.3rem"><span class="f-spin"></span>Fetching...</span>');
-  flog('Starting live results fetch...','info');
+  flog('Searching for live World Cup 2026 results...','info');
+
   const groupList=GKEYS.map(g=>`Group ${g}: ${GROUPS[g].teams.map(t=>t.n).join(', ')}`).join('\n');
-  const prompt=`You are a FIFA World Cup 2026 data assistant. Search the web RIGHT NOW for the latest official FIFA World Cup 2026 results.\n\nGroups:\n${groupList}\n\nReturn ONLY valid JSON (no markdown, no backticks):\n{"fetchedAt":"ISO","groupStage":{"A":{"first":"TeamName","second":"TeamName","third":"TeamName"},...for all 12 groups},"best3":["TeamName",...],"knockoutWinners":{"73":"TeamName or null",...up to 104},"knockoutTeams":{"73":{"t1":"TeamName","t2":"TeamName"},...},"champion":"TeamName or null","runnerUp":"TeamName or null","status":"not_started|group_stage|round_of_32|round_of_16|quarterfinals|semifinals|final|complete","lastMatchPlayed":"description","notes":"string"}\n\nOnly include results for ACTUALLY played matches. Use null for unplayed.`;
+  const prompt=`You are a FIFA World Cup 2026 data assistant. Search the web RIGHT NOW for the latest official FIFA World Cup 2026 results.\n\nGroups:\n${groupList}\n\nReturn ONLY valid JSON (no markdown, no backticks):\n{"fetchedAt":"ISO timestamp","groupStage":{"A":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"B":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"C":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"D":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"E":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"F":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"G":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"H":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"I":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"J":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"K":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"},"L":{"first":"TeamName or null","second":"TeamName or null","third":"TeamName or null"}},"best3":["TeamName",...],"knockoutWinners":{"73":"TeamName or null","74":"TeamName or null","75":"TeamName or null","76":"TeamName or null","77":"TeamName or null","78":"TeamName or null","79":"TeamName or null","80":"TeamName or null","81":"TeamName or null","82":"TeamName or null","83":"TeamName or null","84":"TeamName or null","85":"TeamName or null","86":"TeamName or null","87":"TeamName or null","88":"TeamName or null","89":"TeamName or null","90":"TeamName or null","91":"TeamName or null","92":"TeamName or null","93":"TeamName or null","94":"TeamName or null","95":"TeamName or null","96":"TeamName or null","97":"TeamName or null","98":"TeamName or null","99":"TeamName or null","100":"TeamName or null","101":"TeamName or null","102":"TeamName or null","103":"TeamName or null","104":"TeamName or null"},"knockoutTeams":{"73":{"t1":"TeamName or null","t2":"TeamName or null"},"104":{"t1":"TeamName or null","t2":"TeamName or null"}},"champion":"TeamName or null","runnerUp":"TeamName or null","status":"not_started|group_stage|round_of_32|round_of_16|quarterfinals|semifinals|final|complete","lastMatchPlayed":"short description","notes":"any notes"}\n\nCRITICAL: Only include results for matches that have ACTUALLY been played. Use null for unplayed matches. Use exact team names from the groups list above.`;
+
   try{
-    flog('Calling Claude API with web search...','info');
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:4000,tools:[{type:'web_search_20250305',name:'web_search'}],messages:[{role:'user',content:prompt}]})});
-    if(!resp.ok)throw new Error('API error '+resp.status);
-    const data=await resp.json();
-    let raw='';(data.content||[]).forEach(b=>{if(b.type==='text')raw+=b.text;});
+    flog('Calling fetch proxy...','info');
+
+    // Use Vercel serverless function as proxy (avoids CORS)
+    // The function is at /api/fetch-results in the same Vercel deployment
+    const resp = await fetch('/api/fetch-results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+
+    if(!resp.ok){
+      const errData = await resp.json().catch(()=>({error:'Unknown error'}));
+      // Specific helpful messages
+      if(resp.status === 404){
+        throw new Error('API proxy not found. Make sure api/fetch-results.js is deployed to Vercel alongside index.html.');
+      } else if(resp.status === 500 && errData.error?.includes('ANTHROPIC_API_KEY')){
+        throw new Error('ANTHROPIC_API_KEY not set. Add it to Vercel: Project Settings → Environment Variables → ANTHROPIC_API_KEY');
+      }
+      throw new Error(`Server error ${resp.status}: ${errData.error||'Unknown'}`);
+    }
+
+    const result = await resp.json();
+    const raw = result.text || '';
+    flog('Got response, parsing...','info');
+
     const clean=raw.replace(/```json\s*/gi,'').replace(/```\s*/g,'').trim();
     const j1=clean.indexOf('{'),j2=clean.lastIndexOf('}');
-    if(j1<0||j2<0)throw new Error('No JSON found in response');
+    if(j1<0||j2<0)throw new Error('No JSON found in response — Claude may not have found results yet');
     const parsed=JSON.parse(clean.substring(j1,j2+1));
+
     flog('Status: '+(parsed.status||'unknown'),'ok');
     if(parsed.lastMatchPlayed)flog('Last match: '+parsed.lastMatchPlayed,'ok');
     if(parsed.notes)flog('Notes: '+parsed.notes,'warn');
+
     const validTeams=new Set(ALL_TEAMS.map(t=>t.n));let fixed=0;
-    if(parsed.groupStage){Object.entries(parsed.groupStage).forEach(([g,v])=>{['first','second','third'].forEach(pos=>{if(v[pos]&&v[pos]!=='null'&&!validTeams.has(v[pos])){v[pos]=null;fixed++;}});});}
-    if(fixed)flog(fixed+' unknown team names removed','warn');else flog('All team names valid','ok');
-    if(parsed.status==='not_started'){flog('Tournament not started yet','warn');fstatus('Tournament not started');}
-    else{_fetchData=parsed;showFetchPreview(parsed);flog('Ready to apply!','ok');fstatus('Results fetched!');}
-  }catch(err){flog('ERROR: '+err.message,'err');fstatus('Fetch failed - see log');}
+    if(parsed.groupStage){Object.entries(parsed.groupStage).forEach(([g,v])=>{['first','second','third'].forEach(pos=>{if(v[pos]&&v[pos]!=='null'&&!validTeams.has(v[pos])){flog(`Unknown team "${v[pos]}" in Group ${g} — removed`,'warn');v[pos]=null;fixed++;}});});}
+    if(fixed)flog(fixed+' unknown team names corrected','warn');else flog('All team names valid ✓','ok');
+
+    if(parsed.status==='not_started'){
+      flog('Tournament has not started yet — no results available','warn');
+      fstatus('Tournament not started yet');
+    } else {
+      _fetchData=parsed;
+      showFetchPreview(parsed);
+      flog('Ready to apply!','ok');
+      fstatus('Results fetched!');
+    }
+  }catch(err){
+    flog('ERROR: '+err.message,'err');
+    fstatus('Fetch failed — see log');
+  }
   _fetchRunning=false;
 }
 function showFetchPreview(d){
