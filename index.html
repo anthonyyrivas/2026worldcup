@@ -481,101 +481,87 @@ const RLBL = {R32:'Round of 32',R16:'Round of 16',QF:'Quarter-Finals',SF:'Semi-F
 const PTS = {group1:2,group2:2,group3:1,best3:2,R32:3,R16:4,QF:5,SF:6,finalist:8,runnerUp:10,champion:20};
 
 /* ==============================================================
-   CLOUD SYNC — jsonbin.io public API
-   One shared bin per challenge group. Free, no signup needed.
-   Anyone with the ?g=BINID link auto-joins and syncs.
+   CLOUD SYNC — Firebase Realtime Database (free, no API key)
+   Uses your own free Firebase project (takes 2 min to set up).
+   Once configured, all friends sync automatically.
    ============================================================== */
-const JB = 'https://api.jsonbin.io/v3/b';
-// Free-tier public master key — allows public bin read/write
-const JB_KEY = '$2a$10$D4nP0lVqfGkXqRNKEpQ5t.Kz2sH7mCjWoLnBuIeYtGvXrFwMoA8eO';
-let SYNC_BIN_ID  = null;
+// Your Firebase Realtime Database URL goes here.
+// Set this via the Admin tab → Configure Cloud Sync.
+let FB_URL = localStorage.getItem('wc26_fb_url') || 'https://worldcup2026-17201-default-rtdb.firebaseio.com';
+
+let SYNC_GID     = null;
 let SYNC_PENDING = false;
 let _syncTimer   = null;
 
+function genGroupId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = '';
+  for(let i=0;i<8;i++) id += chars[Math.floor(Math.random()*chars.length)];
+  return id;
+}
+
 async function cloudPush() {
-  if (!SYNC_BIN_ID) return;
+  if (!SYNC_GID || !FB_URL) return;
   try {
-    const payload = { p: S.p, preds: S.preds, res: S.res };
-    await fetch(`${JB}/${SYNC_BIN_ID}`, {
+    const payload = { p: S.p, preds: S.preds, res: S.res, ts: Date.now() };
+    const r = await fetch(`${FB_URL}/groups/${SYNC_GID}.json`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Master-Key': JB_KEY },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    setSyncStatus('synced');
+    setSyncStatus(r.ok ? 'synced' : 'error');
   } catch(e) { setSyncStatus('error'); }
 }
 
 async function cloudPull() {
-  if (!SYNC_BIN_ID) return false;
+  if (!SYNC_GID || !FB_URL) return false;
   try {
-    const r = await fetch(`${JB}/${SYNC_BIN_ID}/latest`, {
-      headers: { 'X-Master-Key': JB_KEY }
-    });
+    const r = await fetch(`${FB_URL}/groups/${SYNC_GID}.json`);
     if (!r.ok) return false;
-    const data = await r.json();
-    const remote = data.record;
+    const remote = await r.json();
     if (!remote || !remote.p) return false;
     const existingIds = new Set(S.p.map(x => x.id));
     (remote.p || []).forEach(rp => {
       if (!existingIds.has(rp.id)) {
-        S.p.push(rp);
-        S.preds[rp.id] = (remote.preds || {})[rp.id] || {};
-        ep(rp.id);
-        existingIds.add(rp.id);
+        S.p.push(rp); S.preds[rp.id] = (remote.preds||{})[rp.id]||{}; ep(rp.id); existingIds.add(rp.id);
       } else {
-        const remPred = (remote.preds || {})[rp.id];
-        if (remPred && completeness(remPred) > completeness(S.preds[rp.id] || {})) {
-          S.preds[rp.id] = remPred;
-          ep(rp.id);
-        }
+        const remPred = (remote.preds||{})[rp.id];
+        if (remPred && completeness(remPred) > completeness(S.preds[rp.id]||{})) { S.preds[rp.id]=remPred; ep(rp.id); }
       }
     });
     if (remote.res) {
-      const rg = Object.keys(remote.res.groups || {}).length;
-      const lg = Object.keys(S.res.groups || {}).length;
-      if (rg > lg) S.res.groups = remote.res.groups;
-      if ((remote.res.best3||[]).length > (S.res.best3||[]).length) S.res.best3 = remote.res.best3;
-      if (remote.res.champion && !S.res.champion) S.res.champion = remote.res.champion;
-      if (remote.res.runnerUp && !S.res.runnerUp) S.res.runnerUp = remote.res.runnerUp;
-      if (Object.keys(remote.res.ko||{}).length > Object.keys(S.res.ko||{}).length) S.res.ko = remote.res.ko;
+      const rg=Object.keys(remote.res.groups||{}).length, lg=Object.keys(S.res.groups||{}).length;
+      if (rg>lg) S.res.groups=remote.res.groups;
+      if ((remote.res.best3||[]).length>(S.res.best3||[]).length) S.res.best3=remote.res.best3;
+      if (remote.res.champion&&!S.res.champion) S.res.champion=remote.res.champion;
+      if (remote.res.runnerUp&&!S.res.runnerUp) S.res.runnerUp=remote.res.runnerUp;
+      if (Object.keys(remote.res.ko||{}).length>Object.keys(S.res.ko||{}).length) S.res.ko=remote.res.ko;
     }
-    saveLocal();
-    return true;
+    saveLocal(); return true;
   } catch(e) { return false; }
 }
 
-async function createBin() {
+async function testFBConnection(url, gid) {
   try {
-    const r = await fetch(JB, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': JB_KEY,
-        'X-Bin-Private': 'false',
-        'X-Bin-Name': 'WC2026-' + Date.now()
-      },
-      body: JSON.stringify({ p: S.p, preds: S.preds, res: S.res })
-    });
-    if (!r.ok) return null;
-    const data = await r.json();
-    return data.metadata?.id || null;
-  } catch(e) { return null; }
+    const testData = { test: true, ts: Date.now() };
+    const r = await fetch(`${url}/ping.json`, { method: 'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(testData) });
+    return r.ok;
+  } catch(e) { return false; }
 }
 
 function setSyncStatus(status) {
   const el = document.getElementById('sync-status');
   if (!el) return;
-  const labels = {synced:'● Synced',syncing:'◌ Syncing...',error:'● Error',offline:'○ Local only',pulling:'◌ Loading...'};
-  const colors = {synced:'var(--green)',syncing:'var(--gold)',error:'var(--red)',offline:'var(--dim)',pulling:'var(--blue)'};
+  const labels = { synced:'● Synced', syncing:'◌ Syncing...', error:'● Error', offline:'○ Local only', pulling:'◌ Loading...' };
+  const colors  = { synced:'var(--green)', syncing:'var(--gold)', error:'var(--red)', offline:'var(--dim)', pulling:'var(--blue)' };
   el.textContent = labels[status] || labels.offline;
-  el.style.color = colors[status] || colors.offline;
+  el.style.color  = colors[status]  || colors.offline;
 }
 
-// Debounced auto-push: waits 2s after last change before pushing
 function schedulePush() {
   clearTimeout(_syncTimer);
   setSyncStatus('syncing');
-  _syncTimer = setTimeout(() => cloudPush(), 2000);
+  _syncTimer = setTimeout(() => cloudPush(), 1500);
 }
 
 /* ==============================================================
@@ -585,18 +571,18 @@ function loadLS(){try{return JSON.parse(localStorage.getItem('wc26v5'))||{};}cat
 function saveLocal(){localStorage.setItem('wc26v5',JSON.stringify(S));flashDot();}
 function save(){
   saveLocal();
-  if(SYNC_BIN_ID) schedulePush();
+  if(SYNC_GID) schedulePush();
 }
 let _fd; function flashDot(){document.querySelectorAll('.as-dot').forEach(d=>{d.classList.add('flash');clearTimeout(_fd);_fd=setTimeout(()=>d.classList.remove('flash'),1100);});}
 
 let S = loadLS();
-if(!S.p)    S.p=[];
+if(!S.p)     S.p=[];
 if(!S.preds) S.preds={};
 if(!S.res)   S.res={groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''};
 saveLocal();
 
-// Load saved bin ID
-SYNC_BIN_ID = localStorage.getItem('wc26_bin') || null;
+// Restore saved group ID
+SYNC_GID = localStorage.getItem('wc26_gid') || null;
 
 function ep(id){
   if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},fin:{},champion:'',runnerUp:'',hotTake:''};
@@ -1748,7 +1734,30 @@ function doSnap(id){
 function renderAdmin(){
   const c=document.getElementById('admin-content');
   const kickoffPast=isLocked();
-  let html=`<div class="fetch-panel">
+
+  // Firebase setup section
+  let html=`<div id="fb-setup-section" style="background:linear-gradient(135deg,rgba(100,180,255,.08),rgba(100,180,255,.03));border:1px solid rgba(100,180,255,.25);border-radius:13px;padding:1.1rem;margin-bottom:1rem">
+    <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--blue);letter-spacing:.1em;margin-bottom:.22rem">Cloud Sync Setup</div>
+    <p style="font-size:.72rem;color:var(--muted);line-height:1.55;margin-bottom:.75rem">Connect a free Firebase Realtime Database so everyone's predictions sync automatically. Takes about 2 minutes.</p>
+    <div style="background:var(--n3);border:1px solid var(--subtle);border-radius:var(--r);padding:.7rem .85rem;margin-bottom:.75rem;font-size:.7rem;color:var(--muted);line-height:1.8">
+      <strong style="color:var(--text);display:block;margin-bottom:.3rem">How to set up (free, no card needed):</strong>
+      <div>1. Go to <strong style="color:var(--blue)">console.firebase.google.com</strong></div>
+      <div>2. Click <strong>Add project</strong> → name it anything → Continue → Continue → Create project</div>
+      <div>3. Click <strong>Realtime Database</strong> in the left menu → Create Database</div>
+      <div>4. Choose any location → Start in <strong>Test mode</strong> → Enable</div>
+      <div>5. Copy the database URL — it looks like: <strong style="color:var(--gold)">https://your-project-default-rtdb.firebaseio.com</strong></div>
+      <div>6. Paste it below and tap Save</div>
+    </div>
+    <div style="display:flex;gap:.45rem;align-items:center;flex-wrap:wrap">
+      <input id="fb-url-input" type="url" placeholder="https://your-project-default-rtdb.firebaseio.com"
+        value="${FB_URL || 'https://worldcup2026-17201-default-rtdb.firebaseio.com'}" style="flex:1;min-width:220px;font-size:.72rem" />
+      <button class="btn btn-sm" style="background:var(--blue);color:var(--navy)" id="fb-save-btn">Save & Test</button>
+      ${FB_URL?'<button class="btn btn-ghost btn-sm" onclick="clearFBUrl()">Clear</button>':''}
+    </div>
+    <div id="fb-test-result" style="margin-top:.45rem;font-size:.7rem"></div>
+    ${FB_URL?`<div class="ok" style="margin-top:.5rem;font-size:.7rem">Firebase URL saved. Go to Home tab to create or join a group.</div>`:''}
+  </div>`;
+  html+=`<div class="fetch-panel">
     <h3>Auto-Fetch Live Results</h3>
     <p>From June 11, tap Fetch Results and Claude will search the web for current standings and knockout results, updating everyone's scores automatically.</p>
     <div style="display:flex;gap:.42rem;flex-wrap:wrap;align-items:center">
@@ -1820,6 +1829,36 @@ function renderAdmin(){
   document.getElementById('adm-reset').addEventListener('click',resetAll);
   document.getElementById('adm-export').addEventListener('click',exportJ);
   document.getElementById('adm-import').addEventListener('click',importJ);
+  // Firebase URL save
+  document.getElementById('fb-save-btn')?.addEventListener('click', async () => {
+    const inp = document.getElementById('fb-url-input');
+    const url = (inp?.value||'').trim().replace(/\/+$/, ''); // strip trailing slash
+    if (!url) { toast('Paste your Firebase URL first'); return; }
+    if (!url.startsWith('https://') || !url.includes('firebaseio.com')) {
+      toast('Invalid URL — should be https://your-project-default-rtdb.firebaseio.com'); return;
+    }
+    const result = document.getElementById('fb-test-result');
+    result.textContent = 'Testing connection...'; result.style.color='var(--muted)';
+    try {
+      const r = await fetch(`${url}/ping.json`, {
+        method: 'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ok:true})
+      });
+      if (r.ok) {
+        FB_URL = url;
+        localStorage.setItem('wc26_fb_url', url);
+        result.textContent = 'Connected! Go to Home tab to create or join a group.';
+        result.style.color = 'var(--green)';
+        renderSyncCard();
+        toast('Firebase connected!');
+      } else {
+        result.textContent = 'Connection failed (' + r.status + '). Check the URL and make sure Test Mode rules are enabled.';
+        result.style.color = 'var(--red)';
+      }
+    } catch(e) {
+      result.textContent = 'Could not connect — check the URL is correct.';
+      result.style.color = 'var(--red)';
+    }
+  });
   document.getElementById('fetch-btn')?.addEventListener('click',()=>runFetch(false));
   document.getElementById('fetch-force-btn')?.addEventListener('click',()=>runFetch(true));
   document.getElementById('fetch-apply')?.addEventListener('click',applyFetched);
@@ -1830,6 +1869,7 @@ function setGR(g,pos,v){if(!S.res.groups)S.res.groups={};if(!S.res.groups[g])S.r
 function toggleRB3(n){if(!S.res.best3)S.res.best3=[];const i=S.res.best3.indexOf(n);if(i>=0)S.res.best3.splice(i,1);else if(S.res.best3.length<8)S.res.best3.push(n);else{toast('Max 8');return;}save();renderAdmin();}
 function setMT(id,side,v){if(!S.res.mt)S.res.mt={};if(!S.res.mt[id])S.res.mt[id]={t1:null,t2:null};S.res.mt[id][side]=v||null;save();}
 function setKOR(id,v){if(!S.res.ko)S.res.ko={};S.res.ko[id]=v;save();toast(`M${id}: ${v||'-'}`);}
+function clearFBUrl(){FB_URL='';localStorage.removeItem('wc26_fb_url');renderAdmin();renderSyncCard();toast('Firebase URL cleared');}
 function resetAll(){if(!confirm('Delete ALL data?'))return;localStorage.removeItem('wc26v5');S={p:[],preds:{},res:{groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''}};save();renderP();updateDrops();renderAdmin();toast('Reset done');}
 function exportJ(){const b=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='wc2026.json';a.click();URL.revokeObjectURL(u);}
 function importJ(){const j=prompt('Paste JSON:');if(!j)return;try{S=JSON.parse(j);save();renderP();updateDrops();toast('Imported');}catch{toast('Invalid JSON');}}
@@ -1893,89 +1933,115 @@ function applyFetched(){
 /* ==============================================================
    SYNC UI & GROUP MANAGEMENT
    ============================================================== */
+function showFBSetup() {
+  go('admin');
+  setTimeout(() => {
+    const el = document.getElementById('fb-setup-section');
+    if (el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+  }, 200);
+  toast('Set up your Firebase URL in Admin -> Cloud Sync Setup');
+}
+
 function renderSyncCard() {
   const ui = document.getElementById('sync-state-ui');
   if (!ui) return;
   const bar = document.getElementById('sync-bar');
 
-  if (SYNC_BIN_ID) {
-    // Connected state
-    const shortCode = SYNC_BIN_ID.slice(-6).toUpperCase();
-    if (bar) { bar.style.display = 'flex'; document.getElementById('bin-code-display').textContent = shortCode; }
+  if (SYNC_GID && FB_URL) {
+    // Connected
+    const code = SYNC_GID;
+    if (bar) { bar.style.display='flex'; const bcd=document.getElementById('bin-code-display'); if(bcd) bcd.textContent=code; }
     ui.innerHTML = `
-      <div class="ok" style="margin-bottom:.65rem;text-align:center">
-        Connected! Your predictions sync automatically with anyone who joins this group.
+      <div class="ok" style="margin-bottom:.6rem;text-align:center">Connected! Everyone in the group sees all predictions automatically.</div>
+      <div style="background:var(--n3);border:1px solid rgba(100,180,255,.25);border-radius:var(--r);padding:.55rem .8rem;text-align:center;margin-bottom:.6rem">
+        <div style="font-size:.62rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.25rem">Group Code</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:1.85rem;color:var(--blue);letter-spacing:.22em">${code}</div>
+        <div style="font-size:.65rem;color:var(--dim);margin-top:.2rem">Share this code or the WhatsApp link with friends</div>
       </div>
-      <div style="background:var(--n3);border:1px solid rgba(100,180,255,.25);border-radius:var(--r);padding:.6rem .85rem;text-align:center;margin-bottom:.65rem">
-        <div style="font-size:.65rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.3rem">Group Code</div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:2rem;color:var(--blue);letter-spacing:.2em">${shortCode}</div>
-        <div style="font-size:.67rem;color:var(--dim);margin-top:.2rem">Share this code with friends so they can join</div>
-      </div>
-      <div style="display:flex;gap:.4rem;justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-sm" style="background:var(--blue);color:var(--navy)" onclick="shareGroupCode()">Share Code on WhatsApp</button>
-        <button class="btn btn-ghost btn-sm" onclick="manualSync()">↻ Refresh Now</button>
-        <button class="btn btn-ghost btn-sm" onclick="leaveGroup()">Leave Group</button>
+      <div style="display:flex;gap:.38rem;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-sm" style="background:var(--blue);color:var(--navy)" onclick="shareGroupCode()">Share on WhatsApp</button>
+        <button class="btn btn-ghost btn-sm" onclick="manualSync()">Sync Now</button>
+        <button class="btn btn-ghost btn-sm" onclick="leaveGroup()">Leave</button>
       </div>`;
-  } else {
-    // Not connected state
-    if (bar) bar.style.display = 'none';
+  } else if (!FB_URL) {
+    // Need Firebase setup first
+    if (bar) bar.style.display='none';
     ui.innerHTML = `
-      <div style="display:flex;gap:.45rem;margin-bottom:.75rem;flex-wrap:wrap">
-        <button class="btn btn-sm" style="flex:1;background:var(--blue);color:var(--navy);min-width:130px" id="create-group-btn">Create New Group</button>
-        <button class="btn btn-ghost btn-sm" style="flex:1;min-width:130px" id="join-group-btn">Join with Code</button>
+      <div class="warn" style="margin-bottom:.6rem;font-size:.74rem">
+        <strong>One-time setup needed.</strong> Cloud sync requires a free Firebase Realtime Database (2 min to set up). Once done, everyone's predictions sync instantly.
       </div>
-      <div style="font-size:.68rem;color:var(--dim);line-height:1.5">Without a group, predictions are only saved on your device. Create or join a group so everyone can see each other's picks and compete on the live leaderboard.</div>`;
+      <button class="btn btn-sm btn-full" onclick="showFBSetup()" style="background:var(--blue);color:var(--navy);margin-bottom:.4rem">
+        Set Up Cloud Sync (2 min)
+      </button>
+      <div style="font-size:.67rem;color:var(--dim);line-height:1.5;text-align:center">Without this, predictions only save on your device.</div>`;
+  } else {
+    // Firebase configured but no group yet
+    if (bar) bar.style.display='none';
+    ui.innerHTML = `
+      <div class="ok" style="margin-bottom:.6rem">Firebase connected! Create or join a group to start syncing.</div>
+      <div style="display:flex;gap:.42rem;margin-bottom:.6rem;flex-wrap:wrap">
+        <button class="btn btn-sm" style="flex:1;background:var(--blue);color:var(--navy);min-width:125px" id="create-group-btn">Create New Group</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1;min-width:125px" id="join-group-btn">Join with Code</button>
+      </div>`;
     document.getElementById('create-group-btn').addEventListener('click', createGroup);
     document.getElementById('join-group-btn').addEventListener('click', joinGroup);
   }
 }
 
 async function createGroup() {
+  if (!FB_URL) {
+    showFBSetup();
+    return;
+  }
   const btn = document.getElementById('create-group-btn');
   if (btn) { btn.textContent = 'Creating...'; btn.disabled = true; }
   const ui = document.getElementById('sync-state-ui');
   ui.innerHTML = `<div style="text-align:center;padding:.75rem;color:var(--muted);font-size:.78rem"><span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(100,180,255,.3);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.4rem"></span>Creating your group...</div>`;
 
-  const binId = await createBin();
-  if (!binId) {
-    ui.innerHTML = `<div class="warn">Could not create group — check your connection. You can still use the app locally.</div>`;
-    renderSyncCard();
+  const gid = genGroupId();
+  SYNC_GID = gid;
+  try {
+    const r = await fetch(`${FB_URL}/groups/${gid}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p: S.p, preds: S.preds, res: S.res, ts: Date.now() })
+    });
+    if (!r.ok) throw new Error('write failed: ' + r.status);
+  } catch(e) {
+    SYNC_GID = null;
+    ui.innerHTML = `<div class="warn" style="margin:0">Could not connect. Check your Firebase URL in Admin → Cloud Sync Setup, or check your internet.</div>`;
+    setTimeout(() => renderSyncCard(), 3000);
     return;
   }
-  SYNC_BIN_ID = binId;
-  localStorage.setItem('wc26_bin', binId);
-  // Push current data
-  await cloudPush();
+  localStorage.setItem('wc26_gid', gid);
   renderSyncCard();
   setSyncStatus('synced');
   toast('Group created! Share the code with friends.');
 }
 
 async function joinGroup() {
-  const input = prompt('Paste the group invite link or bin ID from WhatsApp:');
+  const input = prompt('Enter the 8-character group code (e.g. A3F9C2B1)\nor paste the full invite link from WhatsApp:');
   if (!input || !input.trim()) return;
-  const trimmed = input.trim();
-  // Extract bin ID from URL (?g=ID) or use raw 24-char hex ID
+  const trimmed = input.trim().toUpperCase().replace(/\s/g,'');
+  // Extract code from URL (?g=CODE) or use raw code
   let binId = null;
-  const urlMatch = trimmed.match(/[?&]g=([a-f0-9]{24})/i);
-  const rawMatch = trimmed.match(/([a-f0-9]{24})/i);
+  const urlMatch = trimmed.match(/[?&]G=([A-Z0-9]{8})/i);
   if (urlMatch) binId = urlMatch[1];
-  else if (rawMatch) binId = rawMatch[1];
-  if (!binId) { toast('Could not find a valid group ID — paste the full link from WhatsApp'); return; }
-  let BINID_TEMP = binId;
+  else if (/^[A-Z0-9]{8}$/.test(trimmed)) binId = trimmed;
+  if (!binId) { toast('Invalid code — enter the 8-character code or paste the full link'); return; }
 
   const ui = document.getElementById('sync-state-ui');
   ui.innerHTML = `<div style="text-align:center;padding:.75rem;color:var(--muted);font-size:.78rem"><span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(100,180,255,.3);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.4rem"></span>Joining group...</div>`;
 
-  SYNC_BIN_ID = BINID_TEMP;
+  SYNC_GID = binId;
   const ok = await cloudPull();
   if (!ok) {
-    SYNC_BIN_ID = null;
+    SYNC_GID = null;
     ui.innerHTML = `<div class="warn">Could not join — invalid code or connection error.</div>`;
     setTimeout(() => renderSyncCard(), 2000);
     return;
   }
-  localStorage.setItem('wc26_bin', binId);
+  localStorage.setItem('wc26_gid', binId);
   renderP(); updateDrops(); renderSyncCard();
   setSyncStatus('synced');
   toast('Joined group! All predictions loaded.');
@@ -1983,15 +2049,15 @@ async function joinGroup() {
 
 function leaveGroup() {
   if (!confirm('Leave this group? Your local predictions stay, but you won\'t sync with friends.')) return;
-  SYNC_BIN_ID = null;
-  localStorage.removeItem('wc26_bin');
+  SYNC_GID = null;
+  localStorage.removeItem('wc26_gid');
   renderSyncCard();
   setSyncStatus('offline');
   toast('Left group — now in local-only mode.');
 }
 
 async function manualSync() {
-  if (!SYNC_BIN_ID) { toast('Not in a group yet. Create or join one above.'); return; }
+  if (!SYNC_GID) { toast('Not in a group yet. Create or join one above.'); return; }
   setSyncStatus('pulling');
   const ok = await cloudPull();
   if (ok) {
@@ -2006,10 +2072,11 @@ async function manualSync() {
 }
 
 function shareGroupCode() {
-  if (!SYNC_BIN_ID) return;
-  const shortCode = SYNC_BIN_ID.slice(-6).toUpperCase();
-  const joinLink = `${APP_URL}?g=${SYNC_BIN_ID}`;
-  const msg = `World Cup 2026 Prediction Challenge!\n\nJoin our group to compare predictions and see who wins the leaderboard!\n\nGroup Code: ${shortCode}\n\nOr just tap this link to join automatically:\n${joinLink}`;
+  if (!SYNC_GID) return;
+  const code = SYNC_GID;
+  const fbEncoded = FB_URL ? encodeURIComponent(FB_URL) : '';
+  const joinLink = `${APP_URL}?g=${SYNC_GID}${fbEncoded?'&fb='+fbEncoded:''}`;
+  const msg = `World Cup 2026 Prediction Challenge!\n\nJoin our prediction group to compare brackets and compete on the live leaderboard!\n\nGroup Code: ${code}\n\nTap the link to join automatically (no setup needed):\n${joinLink}\n\nMake your own predictions: ${APP_URL}`;
   openWA(msg);
 }
 
@@ -2017,10 +2084,29 @@ function shareGroupCode() {
 async function checkGroupURL() {
   const params = new URLSearchParams(window.location.search);
   const g = params.get('g');
-  if (!g) return false;
-  // Auto-join the group
-  SYNC_BIN_ID = g;
-  localStorage.setItem('wc26_bin', g);
+  const fbParam = params.get('fb'); // optional: ?fb=ENCODED_URL
+  if (!g || g.length !== 8) return false;
+  // If a Firebase URL was included in the link, save it
+  if (fbParam) {
+    try {
+      const url = decodeURIComponent(fbParam);
+      if (url.startsWith('https://') && url.includes('firebaseio.com')) {
+        FB_URL = url;
+        localStorage.setItem('wc26_fb_url', url);
+      }
+    } catch(e) {}
+  }
+  if (!FB_URL) {
+    // Can't pull without a Firebase URL — just save GID for later
+    SYNC_GID = g.toUpperCase();
+    localStorage.setItem('wc26_gid', g);
+    history.replaceState({}, document.title, window.location.pathname);
+    renderSyncCard();
+    toast('Group code saved! Set up Firebase URL in Admin to sync.');
+    return true;
+  }
+  SYNC_GID = g.toUpperCase();
+  localStorage.setItem('wc26_gid', g);
   history.replaceState({}, document.title, window.location.pathname);
   setSyncStatus('pulling');
   const ok = await cloudPull();
@@ -2037,14 +2123,14 @@ async function checkGroupURL() {
 
 // Auto-refresh from cloud every 45 seconds when app is open
 setInterval(async () => {
-  if (!SYNC_BIN_ID) return;
+  if (!SYNC_GID) return;
   const ok = await cloudPull();
   if (ok) {
     renderP(); updateDrops();
     if (document.getElementById('page-leaderboard').classList.contains('active')) renderLB();
     setSyncStatus('synced');
   }
-}, 45000);
+}, 30000);
 if(checkViewMode()){
   // public read-only view rendered
 } else {
@@ -2055,7 +2141,7 @@ if(checkViewMode()){
 
   // Auto-join via ?g=BINID link, then pull latest from cloud
   checkGroupURL().then(() => {
-    if(SYNC_BIN_ID && !new URLSearchParams(window.location.search).get('g')){
+    if(SYNC_GID && !new URLSearchParams(window.location.search).get('g')){
       setSyncStatus('pulling');
       cloudPull().then(ok => {
         if(ok){ renderP(); updateDrops(); setSyncStatus('synced'); }
