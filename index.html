@@ -918,23 +918,41 @@ function removeP(id,e){
   if(!confirm('Remove '+p.name+'?'))return;
   S.p=S.p.filter(x=>x.id!==id);delete S.preds[id];save();renderP();updateDrops();
 }
+function bracketComplete(pred){
+  if(!pred) return false;
+  // New style: fin[104] set (bracket-style Final pick)
+  if(pred.fin && pred.fin[104]) return true;
+  // Old style: champion/runnerUp set directly (pre-fin migration)
+  if(pred.champion && pred.runnerUp) return true;
+  return false;
+}
+
 function needsBonus(pred){
   if(!pred) return false;
-  // Bracket complete but bonus not yet filled
-  const bracketDone = !!(pred.fin && pred.fin[104]);
-  if(!bracketDone) return false;
+  if(!bracketComplete(pred)) return false;
   const bon = pred.bonus || {};
   const filled = ['mvp','scorer','keeper','flop','darkHorse'].filter(k=>bon[k]&&bon[k].trim()).length;
-  return filled === 0; // show prompt if none filled yet
+  return filled === 0;
 }
 
 function goPred(id){
   go('predict');
   document.getElementById('pred-sel').value=id;
   CUR_USER=id;
-  // If bracket is complete but bonus not started, drop them straight on the Bonus step
   const pred=S.preds[id];
-  CUR_STEP = needsBonus(pred) ? 'bonus' : 'groups';
+  // If bracket done but bonus empty → go straight to bonus
+  if(needsBonus(pred)) CUR_STEP='bonus';
+  // If bracket partially done → go to groups
+  else CUR_STEP='groups';
+  renderPred();
+}
+
+// Navigate directly to bonus step for any user
+function goBonus(id){
+  go('predict');
+  document.getElementById('pred-sel').value=id;
+  CUR_USER=id;
+  CUR_STEP='bonus';
   renderPred();
 }
 
@@ -967,7 +985,7 @@ function renderP(){
       <div onclick="event.stopPropagation()" style="display:flex;gap:.26rem">
         <button class="btn btn-sm btn-ghost" onclick="showRC('${p.id}')">📊</button>
         ${wants
-          ? `<button class="btn btn-sm" style="background:var(--gold);color:var(--navy)" onclick="goPred('${p.id}')">Fill Bonus</button>`
+          ? `<button class="btn btn-sm" style="background:var(--gold);color:var(--navy)" onclick="goBonus('${p.id}')">Fill Bonus</button>`
           : `<button class="btn btn-sm btn-wa" onclick="openShare('${p.id}')">Share</button>`
         }
         <button class="btn btn-sm btn-danger" onclick="removeP('${p.id}',event)">x</button>
@@ -1021,7 +1039,7 @@ function stepDone(id,pred){
   if(id==='R16')return R16.every(m=>pred.r16&&pred.r16[m.id]);
   if(id==='QF')return QF.every(m=>pred.qf&&pred.qf[m.id]);
   if(id==='SF')return SF.every(m=>pred.sf&&pred.sf[m.id]);
-  if(id==='Final')return !!(pred.fin&&pred.fin[104]);
+  if(id==='Final')return !!(pred.fin&&pred.fin[104])||(!!pred.champion&&!!pred.runnerUp);
   if(id==='bonus'){const b=pred.bonus||{};return[b.mvp,b.scorer,b.keeper,b.flop,b.darkHorse].filter(Boolean).length>=3;}
   return false;
 }
