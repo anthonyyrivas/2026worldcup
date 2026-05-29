@@ -561,15 +561,61 @@ async function cloudPull() {
     if (!r.ok) return false;
     const remote = await r.json();
     if (!remote || !remote.p) return false;
+
     const existingIds = new Set(S.p.map(x => x.id));
     (remote.p || []).forEach(rp => {
+      const remPred = (remote.preds||{})[rp.id] || {};
+
       if (!existingIds.has(rp.id)) {
-        S.p.push(rp); S.preds[rp.id] = (remote.preds||{})[rp.id]||{}; ep(rp.id); existingIds.add(rp.id);
+        // New participant — add them fully
+        S.p.push(rp);
+        S.preds[rp.id] = remPred;
+        ep(rp.id);
+        existingIds.add(rp.id);
       } else {
-        const remPred = (remote.preds||{})[rp.id];
-        if (remPred && completeness(remPred) > completeness(S.preds[rp.id]||{})) { S.preds[rp.id]=remPred; ep(rp.id); }
+        // Existing participant — smart field-level merge
+        // Never overwrite a field that is set locally with an empty remote value
+        const local = S.preds[rp.id] || {};
+
+        // Bracket picks: take whichever round has more data
+        const pickFields = ['r32','r16','qf','sf','fin'];
+        pickFields.forEach(f => {
+          const remKeys = Object.keys(remPred[f]||{}).filter(k=>(remPred[f]||{})[k]);
+          const locKeys = Object.keys(local[f]||{}).filter(k=>(local[f]||{})[k]);
+          if (remKeys.length > locKeys.length) local[f] = remPred[f];
+        });
+
+        // Groups and best3: take remote if more complete
+        if (completeness({groups:remPred.groups,best3:remPred.best3}) >
+            completeness({groups:local.groups,best3:local.best3})) {
+          local.groups = remPred.groups || local.groups;
+          local.best3  = remPred.best3  || local.best3;
+        }
+
+        // champion/runnerUp: take remote if local is empty
+        if (remPred.champion && !local.champion) local.champion = remPred.champion;
+        if (remPred.runnerUp && !local.runnerUp) local.runnerUp = remPred.runnerUp;
+
+        // hotTake: keep local if set, otherwise take remote
+        if (!local.hotTake && remPred.hotTake) local.hotTake = remPred.hotTake;
+
+        // bonus: field-level merge — keep any field that is set locally, fill empty from remote
+        const locBon = local.bonus || {};
+        const remBon = remPred.bonus || {};
+        local.bonus = {
+          mvp:       locBon.mvp       || remBon.mvp       || '',
+          scorer:    locBon.scorer    || remBon.scorer    || '',
+          keeper:    locBon.keeper    || remBon.keeper    || '',
+          flop:      locBon.flop      || remBon.flop      || '',
+          darkHorse: locBon.darkHorse || remBon.darkHorse || '',
+        };
+
+        S.preds[rp.id] = local;
+        ep(rp.id);
       }
     });
+
+    // Results merge
     if (remote.res) {
       const rg=Object.keys(remote.res.groups||{}).length, lg=Object.keys(S.res.groups||{}).length;
       if (rg>lg) S.res.groups=remote.res.groups;
@@ -578,6 +624,7 @@ async function cloudPull() {
       if (remote.res.runnerUp&&!S.res.runnerUp) S.res.runnerUp=remote.res.runnerUp;
       if (Object.keys(remote.res.ko||{}).length>Object.keys(S.res.ko||{}).length) S.res.ko=remote.res.ko;
     }
+
     saveLocal(); return true;
   } catch(e) { return false; }
 }
@@ -626,9 +673,10 @@ saveLocal();
 SYNC_GID = localStorage.getItem('wc26_gid') || null;
 
 function ep(id){
-  if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},fin:{},champion:'',runnerUp:'',hotTake:''};
+  if(!S.preds[id]) S.preds[id]={groups:{},best3:[],r32:{},r16:{},qf:{},sf:{},fin:{},champion:'',runnerUp:'',hotTake:'',bonus:{mvp:'',scorer:'',keeper:'',flop:'',darkHorse:''}};
   if(S.preds[id].hotTake===undefined) S.preds[id].hotTake='';
   if(S.preds[id].fin===undefined) S.preds[id].fin={};
+  if(S.preds[id].bonus===undefined) S.preds[id].bonus={mvp:'',scorer:'',keeper:'',flop:'',darkHorse:''};
   return S.preds[id];
 }
 
@@ -870,20 +918,58 @@ function removeP(id,e){
   if(!confirm('Remove '+p.name+'?'))return;
   S.p=S.p.filter(x=>x.id!==id);delete S.preds[id];save();renderP();updateDrops();
 }
-function goPred(id){go('predict');document.getElementById('pred-sel').value=id;CUR_USER=id;CUR_STEP='groups';renderPred();}
+function needsBonus(pred){
+  if(!pred) return false;
+  // Bracket complete but bonus not yet filled
+  const bracketDone = !!(pred.fin && pred.fin[104]);
+  if(!bracketDone) return false;
+  const bon = pred.bonus || {};
+  const filled = ['mvp','scorer','keeper','flop','darkHorse'].filter(k=>bon[k]&&bon[k].trim()).length;
+  return filled === 0; // show prompt if none filled yet
+}
+
+function goPred(id){
+  go('predict');
+  document.getElementById('pred-sel').value=id;
+  CUR_USER=id;
+  // If bracket is complete but bonus not started, drop them straight on the Bonus step
+  const pred=S.preds[id];
+  CUR_STEP = needsBonus(pred) ? 'bonus' : 'groups';
+  renderPred();
+}
 
 function renderP(){
   const c=document.getElementById('p-list');
   if(!S.p.length){c.innerHTML='';return;}
-  c.innerHTML=`<div style="font-size:.62rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin:.5rem 0 .35rem">Participants (${S.p.length})</div>`+
-  S.p.map(p=>{
+
+  // Show banner if anyone needs to fill bonus
+  const needsBonusList = S.p.filter(p => needsBonus(S.preds[p.id]));
+  const bonusBanner = needsBonusList.length
+    ? `<div style="background:linear-gradient(135deg,rgba(201,168,76,.12),rgba(201,168,76,.06));border:1px solid var(--border);border-radius:var(--r);padding:.65rem .85rem;margin-bottom:.55rem;display:flex;align-items:flex-start;gap:.5rem">
+        <span style="font-size:1.1rem;flex-shrink:0">🆕</span>
+        <div>
+          <div style="font-size:.76rem;font-weight:600;color:var(--gold);margin-bottom:.15rem">New: Bonus Predictions added!</div>
+          <div style="font-size:.71rem;color:var(--muted);line-height:1.5">Pick your MVP, Golden Boot, Golden Glove, Biggest Flop and Dark Horse team.
+            Tap <strong style="color:var(--gold)">"Fill Bonus"</strong> next to your name to add them now.</div>
+        </div>
+      </div>`
+    : '';
+
+  c.innerHTML=`<div style="font-size:.62rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin:.5rem 0 .35rem">Participants (${S.p.length})</div>`
+  + bonusBanner
+  + S.p.map(p=>{
     const pct=completeness(S.preds[p.id]);
-    return`<div class="p-item" onclick="goPred('${p.id}')">
-      <span class="p-name">${esc(p.name)}</span>
+    const wants=needsBonus(S.preds[p.id]);
+    return`<div class="p-item" onclick="goPred('${p.id}')" style="${wants?'border-color:rgba(201,168,76,.4)':''}">
+      <span class="p-name">${esc(p.name)}${wants?`<span style="font-size:.6rem;background:var(--gold);color:var(--navy);border-radius:4px;padding:.1rem .35rem;margin-left:.4rem;font-weight:700;vertical-align:middle">NEW</span>`:''}
+      </span>
       <span class="p-pct">${pct}%</span>
       <div onclick="event.stopPropagation()" style="display:flex;gap:.26rem">
         <button class="btn btn-sm btn-ghost" onclick="showRC('${p.id}')">📊</button>
-        <button class="btn btn-sm btn-wa" onclick="openShare('${p.id}')">Share</button>
+        ${wants
+          ? `<button class="btn btn-sm" style="background:var(--gold);color:var(--navy)" onclick="goPred('${p.id}')">Fill Bonus</button>`
+          : `<button class="btn btn-sm btn-wa" onclick="openShare('${p.id}')">Share</button>`
+        }
         <button class="btn btn-sm btn-danger" onclick="removeP('${p.id}',event)">x</button>
       </div>
     </div>`;
@@ -911,6 +997,9 @@ function completeness(pred){
   tot+=31;fil+=Object.values(all).filter(Boolean).length;
   // Hot take: optional but counts toward 100%
   tot+=1;if(pred.hotTake&&pred.hotTake.trim())fil++;
+  // Bonus picks: 5 fields (mvp, scorer, keeper, flop, darkHorse)
+  const bon=pred.bonus||{};
+  tot+=5;['mvp','scorer','keeper','flop','darkHorse'].forEach(k=>{if(bon[k]&&bon[k].trim())fil++;});
   return Math.round(fil/tot*100);
 }
 
@@ -921,7 +1010,7 @@ let CUR_USER=null,CUR_STEP='groups';
 const STEPS=[
   {id:'groups',lbl:'Groups'},{id:'best3',lbl:'Best 3rd'},
   {id:'R32',lbl:'R32'},{id:'R16',lbl:'R16'},
-  {id:'QF',lbl:'QF'},{id:'SF',lbl:'SF'},{id:'Final',lbl:'Final'},
+  {id:'QF',lbl:'QF'},{id:'SF',lbl:'SF'},{id:'Final',lbl:'Final'},{id:'bonus',lbl:'Bonus'},
 ];
 
 function stepDone(id,pred){
@@ -933,6 +1022,7 @@ function stepDone(id,pred){
   if(id==='QF')return QF.every(m=>pred.qf&&pred.qf[m.id]);
   if(id==='SF')return SF.every(m=>pred.sf&&pred.sf[m.id]);
   if(id==='Final')return !!(pred.fin&&pred.fin[104]);
+  if(id==='bonus'){const b=pred.bonus||{};return[b.mvp,b.scorer,b.keeper,b.flop,b.darkHorse].filter(Boolean).length>=3;}
   return false;
 }
 
@@ -964,9 +1054,18 @@ function renderPred(){
   const curStepIdx = STEPS.map(s=>s.id).indexOf(CUR_STEP);
   const prevStep = curStepIdx > 0 ? STEPS[curStepIdx-1].id : null;
 
+  const bonusNudge = !locked && needsBonus(pred) && CUR_STEP !== 'bonus'
+    ? `<div style="background:linear-gradient(135deg,rgba(201,168,76,.12),rgba(201,168,76,.06));border:1px solid var(--border);border-radius:var(--r);padding:.6rem .85rem;margin-bottom:.6rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+        <span>🆕</span>
+        <span style="flex:1;font-size:.74rem;color:var(--gold)"><strong>New: Bonus Predictions!</strong> Your bracket is done — add MVP, Golden Boot, Flop &amp; Dark Horse.</span>
+        <button class="btn btn-sm" style="background:var(--gold);color:var(--navy)" onclick="goStep('bonus')">Fill Now →</button>
+      </div>`
+    : '';
+
   wrap.innerHTML=`<progress max="100" value="${pct}"></progress>
   <div class="prog-txt">${pct}% complete — <strong>${esc(user.name)}</strong> ${locked?'(locked)':'<span class="as-dot"></span>'}</div>
   ${lockHtml}
+  ${bonusNudge}
   ${stepsHTML}
   <div id="step-body"></div>
   ${!locked?`<div style="position:sticky;bottom:0;background:var(--navy);border-top:1px solid var(--subtle);padding:.55rem 0;display:flex;justify-content:space-between;align-items:center;gap:.4rem;margin-top:.6rem">
@@ -1013,6 +1112,7 @@ function renderStepBody(pred,locked=false){
   else if(CUR_STEP==='best3')renderBest3(pred,body,locked);
   else if(['R32','R16','QF','SF'].includes(CUR_STEP))renderBracketStep(pred,CUR_STEP,body,locked);
   else if(CUR_STEP==='Final')renderFinal(pred,body,locked);
+  else if(CUR_STEP==='bonus')renderBonus(pred,body,locked);
 }
 
 /* ---- GROUPS ---- */
@@ -1454,13 +1554,128 @@ function checkFinalDone(){
   const pred=ep(CUR_USER);
   if(pred.fin&&pred.fin[104]){
     renderPred();
-    setTimeout(()=>showStepPopup('🏆','Bracket Complete!','Your full World Cup 2026 prediction is locked in! Share your bracket with friends on WhatsApp.',null,'Done — Share My Picks!'),400);
+    setTimeout(()=>showStepPopup('🏆','Bracket Complete!','Final picks locked in! One last step — add your bonus predictions: MVP, Golden Boot, Flop and Dark Horse.','bonus','Add Bonus Predictions →'),400);
   }
 }
+
+/* ---- BONUS PREDICTIONS ---- */
+function renderBonus(pred, body, locked){
+  const bon = pred.bonus || {};
+  const fields = [
+    {key:'mvp',      icon:'🏅', label:'Tournament MVP',      sub:'Best overall player of the tournament',          ph:'e.g. Mbappe, Vinicius Jr, Bellingham...'},
+    {key:'scorer',   icon:'⚽', label:'Golden Boot',          sub:'Top goalscorer of the tournament',               ph:'e.g. Haaland, Lewandowski, Kane...'},
+    {key:'keeper',   icon:'🧤', label:'Golden Glove',         sub:'Best goalkeeper of the tournament',              ph:'e.g. Allison, Courtois, Ter Stegen...'},
+    {key:'flop',     icon:'💀', label:'Biggest Flop',         sub:'Most disappointing player — bold pick!',         ph:'e.g. Neymar, Lukaku, insert your villain...'},
+  ];
+  const filled = ['mvp','scorer','keeper','flop'].filter(k=>bon[k]&&bon[k].trim()).length
+    + (bon.darkHorse?1:0);
+  const allDone = filled >= 5;
+
+  const frag = document.createDocumentFragment();
+
+  const info = document.createElement('div');
+  info.className = 'info';
+  info.innerHTML = `Bonus predictions — just for fun! No points, but they show up in your bracket and the leaderboard. Fill in at least 3 to complete this step. <strong>${filled}/5 filled.</strong>`;
+  frag.appendChild(info);
+
+  // Player fields
+  fields.forEach(f => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'background:var(--n2);border:1px solid var(--subtle);border-radius:9px;padding:.8rem .9rem;margin-bottom:.5rem;transition:border-color .12s';
+    if(bon[f.key]&&bon[f.key].trim()) wrap.style.borderColor='rgba(100,180,255,.35)';
+    wrap.innerHTML = `
+      <div style="display:flex;align-items:center;gap:.45rem;margin-bottom:.4rem">
+        <span style="font-size:1.2rem">${f.icon}</span>
+        <div>
+          <div style="font-size:.8rem;font-weight:600">${f.label}</div>
+          <div style="font-size:.65rem;color:var(--muted)">${f.sub}</div>
+        </div>
+        ${bon[f.key]&&bon[f.key].trim()?`<span style="margin-left:auto;font-size:.68rem;color:var(--blue);font-weight:600">${esc(bon[f.key].trim())}</span>`:''}
+      </div>
+      ${locked
+        ? bon[f.key]
+          ? `<div style="font-size:.82rem;color:var(--text);font-style:italic">${esc(bon[f.key])}</div>`
+          : `<div style="font-size:.75rem;color:var(--dim);font-style:italic">Not filled in</div>`
+        : `<input type="text" maxlength="40" placeholder="${f.ph}"
+             value="${esc(bon[f.key]||'')}"
+             data-key="${f.key}"
+             style="width:100%;font-size:.82rem"
+             class="bonus-input" />`
+      }`;
+    frag.appendChild(wrap);
+  });
+
+  // Dark horse — team picker
+  const dhWrap = document.createElement('div');
+  dhWrap.style.cssText = 'background:var(--n2);border:1px solid var(--subtle);border-radius:9px;padding:.8rem .9rem;margin-bottom:.5rem;transition:border-color .12s';
+  if(bon.darkHorse) dhWrap.style.borderColor='rgba(201,168,76,.35)';
+  dhWrap.innerHTML = `
+    <div style="display:flex;align-items:center;gap:.45rem;margin-bottom:.4rem">
+      <span style="font-size:1.2rem">🌑</span>
+      <div>
+        <div style="font-size:.8rem;font-weight:600">Dark Horse</div>
+        <div style="font-size:.65rem;color:var(--muted)">The team nobody expects to go far — but you do</div>
+      </div>
+      ${bon.darkHorse?`<span style="margin-left:auto;font-size:.68rem;color:var(--gold);font-weight:600">${ti(bon.darkHorse).f} ${esc(dname(bon.darkHorse))}</span>`:''}
+    </div>
+    ${locked
+      ? bon.darkHorse
+        ? `<div style="font-size:.82rem">${ti(bon.darkHorse).f} ${esc(dname(bon.darkHorse))}</div>`
+        : `<div style="font-size:.75rem;color:var(--dim);font-style:italic">Not filled in</div>`
+      : `<select id="bonus-darkHorse" style="width:100%;font-size:.82rem">
+          <option value="">-- pick a team --</option>
+          ${ALL_TEAMS.map(t=>`<option value="${t.n}" ${bon.darkHorse===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}
+         </select>`
+    }`;
+  frag.appendChild(dhWrap);
+
+  if(allDone && !locked){
+    const done = document.createElement('div');
+    done.className = 'ok';
+    done.style.cssText = 'text-align:center;margin-top:.6rem';
+    done.innerHTML = '🎉 All bonus predictions in! Your bracket is 100% complete.';
+    frag.appendChild(done);
+  }
+
+  body.innerHTML = '';
+  body.appendChild(frag);
+
+  if(!locked){
+    // Wire text inputs
+    body.querySelectorAll('.bonus-input').forEach(inp => {
+      inp.addEventListener('input', function(){
+        const val = this.value.slice(0,40);
+        this.value = val;
+        ep(CUR_USER).bonus[this.dataset.key] = val;
+        save();
+        // Re-render to update filled count without losing focus
+        const newFilled = ['mvp','scorer','keeper','flop','darkHorse']
+          .filter(k=>ep(CUR_USER).bonus[k]&&ep(CUR_USER).bonus[k].trim()).length;
+        body.querySelector('.info strong').textContent = newFilled + '/5 filled.';
+        // Update border
+        const parent = this.closest('[style]');
+        if(parent) parent.style.borderColor = val.trim()?'rgba(100,180,255,.35)':'var(--subtle)';
+      });
+    });
+    // Wire dark horse select
+    const dhSel = document.getElementById('bonus-darkHorse');
+    if(dhSel){
+      dhSel.addEventListener('change', function(){
+        ep(CUR_USER).bonus.darkHorse = this.value;
+        save();
+        if(stepDone('bonus', ep(CUR_USER))){
+          setTimeout(()=>showStepPopup('🎉','All Done!','Your bracket is 100% complete! Share it on WhatsApp and see who gets bragging rights.',null,'Share My Bracket!'),300);
+        }
+        renderPred();
+      });
+    }
+  }
+}
+
 function clearStep(){
   if(!CUR_USER||isLocked()){toast('Predictions are locked');return;}
   const pred=ep(CUR_USER);
-  const map={groups:()=>{pred.groups={};pred.best3=[];},best3:()=>{pred.best3=[];},R32:()=>{pred.r32={};},R16:()=>{pred.r16={};},QF:()=>{pred.qf={};},SF:()=>{pred.sf={};},Final:()=>{pred.fin={};pred.champion='';pred.runnerUp='';}};
+  const map={groups:()=>{pred.groups={};pred.best3=[];},best3:()=>{pred.best3=[];},R32:()=>{pred.r32={};},R16:()=>{pred.r16={};},QF:()=>{pred.qf={};},SF:()=>{pred.sf={};},Final:()=>{pred.fin={};pred.champion='';pred.runnerUp='';},bonus:()=>{pred.bonus={mvp:'',scorer:'',keeper:'',flop:'',darkHorse:''};}};
   if(!confirm('Clear '+CUR_STEP+' picks?'))return;
   (map[CUR_STEP]||(() => {}))();save();renderPred();toast('Cleared');
 }
@@ -1522,6 +1737,20 @@ function buildWAMsg(uid){
   if(pred.hotTake&&pred.hotTake.trim()){
     lines.push(`*MY HOT TAKE*`);
     lines.push(`"${pred.hotTake.trim()}"`);
+    lines.push('');
+  }
+
+  // Bonus picks
+  const bon = pred.bonus || {};
+  const bonLines = [];
+  if(bon.mvp?.trim())      bonLines.push(`MVP: ${bon.mvp.trim()}`);
+  if(bon.scorer?.trim())   bonLines.push(`Golden Boot: ${bon.scorer.trim()}`);
+  if(bon.keeper?.trim())   bonLines.push(`Golden Glove: ${bon.keeper.trim()}`);
+  if(bon.flop?.trim())     bonLines.push(`Biggest Flop: ${bon.flop.trim()}`);
+  if(bon.darkHorse?.trim())bonLines.push(`Dark Horse: ${wname(bon.darkHorse)} ${ti(bon.darkHorse).f}`);
+  if(bonLines.length){
+    lines.push('*BONUS PREDICTIONS*');
+    bonLines.forEach(l=>lines.push(l));
     lines.push('');
   }
 
@@ -1668,6 +1897,26 @@ function renderPublicView(data){
     });
     html+=`</div></div>`;
   });
+  // Bonus picks
+  const bon=pred.bonus||{};
+  const bonRows=[
+    {icon:'🏅',label:'MVP',val:bon.mvp},
+    {icon:'⚽',label:'Golden Boot',val:bon.scorer},
+    {icon:'🧤',label:'Golden Glove',val:bon.keeper},
+    {icon:'💀',label:'Biggest Flop',val:bon.flop},
+    {icon:'🌑',label:'Dark Horse',val:bon.darkHorse?`${ti(bon.darkHorse).f} ${dname(bon.darkHorse)}`:''},
+  ].filter(r=>r.val&&r.val.trim());
+  if(bonRows.length){
+    html+=`<div style="margin-bottom:.9rem"><div class="pub-sec">Bonus Predictions</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.35rem">
+      ${bonRows.map(r=>`<div class="pub-g" style="padding:.5rem .7rem;display:flex;align-items:center;gap:.4rem">
+        <span style="font-size:1rem">${r.icon}</span>
+        <div><div style="font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${r.label}</div>
+        <div style="font-size:.78rem;font-weight:500;margin-top:.06rem">${esc(r.val.trim())}</div></div>
+      </div>`).join('')}
+    </div></div>`;
+  }
+
   html+=`<div style="text-align:center;padding:.85rem 0 .3rem;font-size:.65rem;color:var(--dim);letter-spacing:.12em">2026worldcup-nine.vercel.app</div></div>`;
   div.innerHTML=html;
   document.body.insertBefore(div,document.body.firstChild);
@@ -1856,6 +2105,21 @@ function showRC(uid){
     <div class="rc-hot-take">"${esc(pred.hotTake.trim())}"</div>
   </div>`:''}
 
+  ${(()=>{const bon=pred.bonus||{};const rows=[
+    {icon:'🏅',label:'MVP',val:bon.mvp},
+    {icon:'⚽',label:'Golden Boot',val:bon.scorer},
+    {icon:'🧤',label:'Golden Glove',val:bon.keeper},
+    {icon:'💀',label:'Biggest Flop',val:bon.flop},
+    {icon:'🌑',label:'Dark Horse',val:bon.darkHorse?`${ti(bon.darkHorse).f} ${dname(bon.darkHorse)}`:''},
+  ].filter(r=>r.val&&r.val.trim());
+  return rows.length?`<div class="rc-section">
+    <div class="rc-sec-title">Bonus Predictions</div>
+    ${rows.map(r=>`<div class="rc-stat">
+      <span class="rc-stat-label">${r.icon} ${r.label}</span>
+      <span class="rc-stat-val" style="color:var(--text);font-style:italic">${esc(r.val.trim())}</span>
+    </div>`).join('')}
+  </div>`:'';})()}
+
   <div style="display:flex;gap:.45rem;margin-top:.85rem;flex-wrap:wrap">
     <button class="btn btn-wa btn-sm" onclick="openShare('${uid}');closeRC()">📲 Share My Bracket</button>
     <button class="btn btn-ghost btn-sm" onclick="closeRC();goPred('${uid}')">Edit Picks</button>
@@ -1945,6 +2209,25 @@ function renderResults(){
             <div style="font-size:.82rem;font-style:italic;color:var(--text);line-height:1.55">"${esc(S.preds[p.id].hotTake.trim())}"</div>
           </div>
         </div>`).join('')}
+    </div>
+  </div>`:''}
+  ${S.p.length&&S.p.some(p=>{const b=S.preds[p.id]?.bonus||{};return Object.values(b).some(v=>v?.trim());})?`
+  <div style="margin-top:.9rem">
+    <div class="p-sec">🎯 Bonus Predictions</div>
+    <div style="display:flex;flex-direction:column;gap:.5rem">
+      ${S.p.filter(p=>{const b=S.preds[p.id]?.bonus||{};return Object.values(b).some(v=>v?.trim());}).map(p=>{
+        const b=S.preds[p.id].bonus||{};
+        const parts=[];
+        if(b.mvp?.trim())       parts.push(`🏅 MVP: <strong>${esc(b.mvp.trim())}</strong>`);
+        if(b.scorer?.trim())    parts.push(`⚽ Boot: <strong>${esc(b.scorer.trim())}</strong>`);
+        if(b.keeper?.trim())    parts.push(`🧤 Glove: <strong>${esc(b.keeper.trim())}</strong>`);
+        if(b.flop?.trim())      parts.push(`💀 Flop: <strong>${esc(b.flop.trim())}</strong>`);
+        if(b.darkHorse?.trim()) parts.push(`🌑 Dark Horse: <strong>${ti(b.darkHorse).f} ${esc(dname(b.darkHorse))}</strong>`);
+        return`<div style="background:var(--n2);border:1px solid rgba(100,180,255,.18);border-radius:var(--r);padding:.65rem .9rem">
+          <div style="font-size:.7rem;color:var(--blue);font-weight:600;margin-bottom:.3rem">${esc(p.name)}</div>
+          <div style="font-size:.77rem;color:var(--text);line-height:1.75">${parts.join(' &nbsp;·&nbsp; ')}</div>
+        </div>`;
+      }).join('')}
     </div>
   </div>`:''}
   <div class="snap-btns">
