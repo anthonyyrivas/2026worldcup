@@ -2473,6 +2473,22 @@ function renderAdmin(){
         <button class="btn btn-ghost btn-sm" id="fetch-discard">Discard</button>
       </div></div>
   </div>
+  <!-- SAVE & APPLY BUTTON (sticky top) -->
+  <div style="background:var(--n2);border:1px solid var(--border);border-radius:12px;padding:.85rem 1rem;margin-bottom:.85rem">
+    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;justify-content:space-between">
+      <div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold);letter-spacing:.1em">Manual Results Entry</div>
+        <div class="adm-save-count" style="font-size:.68rem;color:var(--muted);margin-top:.1rem">${Object.keys(S.res.groups||{}).length} groups + ${Object.values(S.res.ko||{}).filter(Boolean).length} match winners entered</div>
+      </div>
+      <button class="btn adm-save-btn" style="font-size:.8rem;padding:.55rem 1.1rem" onclick="saveResults()">
+        💾 Save & Apply to Live Scores
+      </button>
+    </div>
+    <div style="font-size:.67rem;color:var(--dim);margin-top:.5rem;line-height:1.55">
+      Enter results below using the dropdowns, then tap <strong style="color:var(--gold)">Save & Apply</strong> to push scores to everyone in the group instantly. Changes are not live until you tap Save.
+    </div>
+  </div>
+
   <div class="sec">Group Stage Results</div>
   <div class="info" style="font-size:.69rem">Enter the actual 1st, 2nd and 3rd for each group to drive scoring.</div>
   <div class="g-grid">`;
@@ -2514,6 +2530,11 @@ function renderAdmin(){
     <div><label>Runner-Up</label><select class="adm-sel" id="adm-runner" style="width:100%"><option value="">-</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${S.res.runnerUp===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select></div>
   </div>
   <div class="divider"></div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.65rem;align-items:center">
+    <button class="btn adm-save-btn" style="font-size:.82rem;padding:.58rem 1.2rem;flex:1;min-width:200px" onclick="saveResults()">
+      💾 Save & Apply to Live Scores
+    </button>
+  </div>
   <div style="display:flex;gap:.4rem;flex-wrap:wrap">
     <button class="btn btn-danger btn-sm" id="adm-reset">Reset All</button>
     <button class="btn btn-ghost btn-sm" id="adm-export">Export JSON</button>
@@ -2523,7 +2544,17 @@ function renderAdmin(){
   c.querySelectorAll('.adm-sel[data-g]').forEach(sel=>sel.addEventListener('change',function(){setGR(this.dataset.g,this.dataset.pos,this.value);}));
   c.querySelectorAll('#adm-b3 .b3-item').forEach(el=>el.addEventListener('click',function(){toggleRB3(this.dataset.team);}));
   c.querySelectorAll('.adm-mt').forEach(sel=>sel.addEventListener('change',function(){setMT(Number(this.dataset.id),this.dataset.side,this.value);}));
-  c.querySelectorAll('.adm-win').forEach(sel=>sel.addEventListener('change',function(){setKOR(Number(this.dataset.id),this.value);}));
+  c.querySelectorAll('.adm-win').forEach(sel=>sel.addEventListener('change',function(){
+    setKOR(Number(this.dataset.id),this.value);
+    // Highlight the winner select green when set
+    this.style.borderColor = this.value ? 'var(--green)' : '';
+    this.style.color = this.value ? 'var(--green)' : '';
+    updateSaveBtnCount();
+  }));
+  // Restore green highlights for already-set winners on render
+  c.querySelectorAll('.adm-win').forEach(sel=>{
+    if(sel.value){sel.style.borderColor='var(--green)';sel.style.color='var(--green)';}
+  });
   document.getElementById('adm-champ').addEventListener('change',function(){S.res.champion=this.value;save();toast('Champion: '+(this.value||'-'));});
   document.getElementById('adm-runner').addEventListener('change',function(){S.res.runnerUp=this.value;save();toast('Runner-up: '+(this.value||'-'));});
   document.getElementById('adm-reset').addEventListener('click',resetAll);
@@ -2565,10 +2596,53 @@ function renderAdmin(){
   document.getElementById('fetch-discard')?.addEventListener('click',()=>{document.getElementById('fetch-preview').classList.remove('on');_fetchData=null;document.getElementById('fetch-status').textContent='';});
 }
 
-function setGR(g,pos,v){if(!S.res.groups)S.res.groups={};if(!S.res.groups[g])S.res.groups[g]={};S.res.groups[g][pos]=v;save();toast(`Group ${g} ${pos}: ${v||'-'}`);}
-function toggleRB3(n){if(!S.res.best3)S.res.best3=[];const i=S.res.best3.indexOf(n);if(i>=0)S.res.best3.splice(i,1);else if(S.res.best3.length<8)S.res.best3.push(n);else{toast('Max 8');return;}save();renderAdmin();}
-function setMT(id,side,v){if(!S.res.mt)S.res.mt={};if(!S.res.mt[id])S.res.mt[id]={t1:null,t2:null};S.res.mt[id][side]=v||null;save();}
-function setKOR(id,v){if(!S.res.ko)S.res.ko={};S.res.ko[id]=v;save();toast(`M${id}: ${v||'-'}`);}
+function setGR(g,pos,v){if(!S.res.groups)S.res.groups={};if(!S.res.groups[g])S.res.groups[g]={};S.res.groups[g][pos]=v;saveLocal();markResultsDirty();}
+function toggleRB3(n){if(!S.res.best3)S.res.best3=[];const i=S.res.best3.indexOf(n);if(i>=0)S.res.best3.splice(i,1);else if(S.res.best3.length<8)S.res.best3.push(n);else{toast('Max 8');return;}saveLocal();markResultsDirty();renderAdmin();}
+function setMT(id,side,v){if(!S.res.mt)S.res.mt={};if(!S.res.mt[id])S.res.mt[id]={t1:null,t2:null};S.res.mt[id][side]=v||null;saveLocal();markResultsDirty();}
+function setKOR(id,v){if(!S.res.ko)S.res.ko={};S.res.ko[id]=v;saveLocal();markResultsDirty();updateSaveBtnCount();}
+
+let _resultsDirty=false;
+function markResultsDirty(){
+  _resultsDirty=true;
+  // Update all save buttons to show unsaved state
+  document.querySelectorAll('.adm-save-btn').forEach(btn=>{
+    btn.style.background='var(--red)';
+    btn.textContent='⚠ Unsaved — Apply to Live Scores';
+  });
+}
+
+async function saveResults(){
+  const btns=document.querySelectorAll('.adm-save-btn');
+  btns.forEach(b=>{b.disabled=true;b.textContent='Saving...';b.style.background='var(--gold)';});
+  saveLocal();
+  // Force-push to Firebase immediately (no debounce)
+  clearTimeout(_syncTimer);
+  let pushed=false;
+  if(SYNC_GID&&FB_URL){
+    setSyncStatus('syncing');
+    await cloudPush();
+    pushed=true;
+  }
+  // Update leaderboard
+  if(document.getElementById('page-leaderboard').classList.contains('active')) renderLB();
+  _resultsDirty=false;
+  const time=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  btns.forEach(b=>{
+    b.disabled=false;
+    b.style.background='var(--green)';
+    b.textContent=`✓ Saved & Applied — ${time}`;
+    setTimeout(()=>{b.style.background='';b.textContent='💾 Save & Apply to Live Scores';},3000);
+  });
+  toast(pushed?'Results saved and synced to all players!':'Results saved locally — scores updated!');
+}
+
+function updateSaveBtnCount(){
+  const ko=Object.values(S.res.ko||{}).filter(Boolean).length;
+  const grp=Object.keys(S.res.groups||{}).length;
+  document.querySelectorAll('.adm-save-count').forEach(el=>{
+    el.textContent=`${grp} groups + ${ko} match winners entered`;
+  });
+}
 function clearFBUrl(){FB_URL='';localStorage.removeItem('wc26_fb_url');renderAdmin();renderSyncCard();toast('Firebase URL cleared');}
 function resetAll(){if(!confirm('Delete ALL data?'))return;localStorage.removeItem('wc26v5');S={p:[],preds:{},res:{groups:{},best3:[],ko:{},mt:{},champion:'',runnerUp:''}};save();renderP();updateDrops();renderAdmin();toast('Reset done');}
 function exportJ(){const b=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='wc2026.json';a.click();URL.revokeObjectURL(u);}
