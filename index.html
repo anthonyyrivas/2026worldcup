@@ -615,14 +615,21 @@ async function cloudPull() {
       }
     });
 
-    // Results merge
+    // Merge results — always take whichever side has MORE data, never reduce
     if (remote.res) {
       const rg=Object.keys(remote.res.groups||{}).length, lg=Object.keys(S.res.groups||{}).length;
       if (rg>lg) S.res.groups=remote.res.groups;
       if ((remote.res.best3||[]).length>(S.res.best3||[]).length) S.res.best3=remote.res.best3;
       if (remote.res.champion&&!S.res.champion) S.res.champion=remote.res.champion;
       if (remote.res.runnerUp&&!S.res.runnerUp) S.res.runnerUp=remote.res.runnerUp;
-      if (Object.keys(remote.res.ko||{}).length>Object.keys(S.res.ko||{}).length) S.res.ko=remote.res.ko;
+      // KO results: merge field-by-field — never overwrite a locally-set winner with null
+      if (remote.res.ko && Object.keys(remote.res.ko).length > 0) {
+        if (!S.res.ko) S.res.ko = {};
+        Object.entries(remote.res.ko).forEach(([mid, winner]) => {
+          // Only take remote value if local is empty for this match
+          if (winner && !S.res.ko[mid]) S.res.ko[mid] = winner;
+        });
+      }
     }
 
     saveLocal(); return true;
@@ -2639,8 +2646,14 @@ function markResultsDirty(){
 async function saveResults(){
   const btns=document.querySelectorAll('.adm-save-btn');
   btns.forEach(b=>{b.disabled=true;b.textContent='Saving...';b.style.background='var(--gold)';});
+
+  // Always save and recalculate — regardless of which tab is open
   saveLocal();
-  // Force-push to Firebase immediately (no debounce)
+
+  // ALWAYS re-render the leaderboard so scores are ready when user switches tab
+  renderLB();
+
+  // Force-push to Firebase immediately (bypass debounce)
   clearTimeout(_syncTimer);
   let pushed=false;
   if(SYNC_GID&&FB_URL){
@@ -2648,17 +2661,40 @@ async function saveResults(){
     await cloudPush();
     pushed=true;
   }
-  // Update leaderboard
-  if(document.getElementById('page-leaderboard').classList.contains('active')) renderLB();
+
   _resultsDirty=false;
   const time=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+
+  // Build a quick score summary to show in admin
+  const scored=S.p.map(p=>({name:p.name,sc:calcScore(p.id)})).sort((a,b)=>b.sc.total-a.sc.total);
+  const summaryHTML=scored.length?`<div style="margin-top:.65rem;background:var(--n3);border-radius:var(--r);padding:.55rem .7rem">
+    <div style="font-size:.65rem;color:var(--gold);font-weight:600;margin-bottom:.35rem;text-transform:uppercase;letter-spacing:.08em">Current Standings</div>
+    ${scored.map((p,i)=>`<div style="display:flex;gap:.5rem;padding:.2rem 0;font-size:.75rem;border-bottom:1px solid var(--subtle);${i===scored.length-1?'border:none':''}">
+      <span style="color:var(--dim);min-width:1.2rem">${i+1}.</span>
+      <span style="flex:1;font-weight:500">${esc(p.name)}</span>
+      <span style="color:var(--gold);font-family:'Bebas Neue',sans-serif;font-size:.88rem">${p.sc.total}pts</span>
+      <span style="color:var(--dim);font-size:.68rem">G:${p.sc.group} K:${p.sc.ko} F:${p.sc.final}</span>
+    </div>`).join('')}
+  </div>`:'';
+
   btns.forEach(b=>{
     b.disabled=false;
     b.style.background='var(--green)';
     b.textContent=`✓ Saved & Applied — ${time}`;
-    setTimeout(()=>{b.style.background='';b.textContent='💾 Save & Apply to Live Scores';},3000);
+    // Insert standings below the top save button
+    const parent=b.closest('div[style*="sticky"]');
+    if(parent){
+      let existing=parent.parentElement.querySelector('.adm-score-summary');
+      if(!existing){existing=document.createElement('div');existing.className='adm-score-summary';parent.after(existing);}
+      existing.innerHTML=summaryHTML;
+    }
+    setTimeout(()=>{b.style.background='';b.textContent='💾 Save & Apply to Live Scores';},4000);
   });
-  toast(pushed?'Results saved and synced to all players!':'Results saved locally — scores updated!');
+
+  const koCount=Object.values(S.res.ko||{}).filter(Boolean).length;
+  toast(pushed
+    ? `✓ ${koCount} results synced to all players!`
+    : `✓ Scores updated! ${koCount} match winners applied.`);
 }
 
 function updateSaveBtnCount(){
