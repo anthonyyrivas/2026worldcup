@@ -2454,6 +2454,19 @@ function renderAdmin(){
     </div>
   </div>
 
+  <!-- LIVE SCORE PANEL — updates immediately as you pick winners -->
+  <div style="background:var(--n2);border:1px solid var(--border);border-radius:10px;padding:.75rem .9rem;margin-bottom:.8rem">
+    <div id="adm-live-scores" style="font-size:.73rem;color:var(--muted)">Enter match winners below to see scores update here instantly.</div>
+  </div>
+
+  <!-- SCORE DIAGNOSTIC — see exactly what's matching -->
+  <details style="margin-bottom:.85rem">
+    <summary style="cursor:pointer;font-size:.76rem;color:var(--blue);padding:.3rem 0;user-select:none" onclick="setTimeout(showScoreDiag,50)">
+      🔍 Score Diagnostic — see who got points for each match
+    </summary>
+    <div id="adm-diag-body" style="margin-top:.5rem;font-size:.72rem"></div>
+  </details>
+
   <div class="sec">Group Stage Results</div>
   <div class="info" style="font-size:.69rem;margin-bottom:.6rem">Pick 1st, 2nd, 3rd for each group that has finished. Tap <strong>Save & Apply</strong> when done.</div>
   <div class="g-grid">`;
@@ -2626,12 +2639,83 @@ function renderAdmin(){
   document.getElementById('fetch-force-btn')?.addEventListener('click',()=>runFetch(true));
   document.getElementById('fetch-apply')?.addEventListener('click',applyFetched);
   document.getElementById('fetch-discard')?.addEventListener('click',()=>{document.getElementById('fetch-preview').classList.remove('on');_fetchData=null;document.getElementById('fetch-status').textContent='';});
+
+  // Show live scores immediately on render
+  showAdminScoreSummary();
 }
 
 function setGR(g,pos,v){if(!S.res.groups)S.res.groups={};if(!S.res.groups[g])S.res.groups[g]={};S.res.groups[g][pos]=v;saveLocal();markResultsDirty();}
 function toggleRB3(n){if(!S.res.best3)S.res.best3=[];const i=S.res.best3.indexOf(n);if(i>=0)S.res.best3.splice(i,1);else if(S.res.best3.length<8)S.res.best3.push(n);else{toast('Max 8');return;}saveLocal();markResultsDirty();renderAdmin();}
 function setMT(id,side,v){if(!S.res.mt)S.res.mt={};if(!S.res.mt[id])S.res.mt[id]={t1:null,t2:null};S.res.mt[id][side]=v||null;saveLocal();markResultsDirty();}
-function setKOR(id,v){if(!S.res.ko)S.res.ko={};S.res.ko[id]=v;saveLocal();markResultsDirty();updateSaveBtnCount();}
+function setKOR(id,v){
+  if(!S.res.ko)S.res.ko={};
+  S.res.ko[id]=v;
+  saveLocal();
+  markResultsDirty();
+  updateSaveBtnCount();
+  // Immediately recalculate and show scores in admin — no need to wait for Save
+  _debouncedScoreRefresh();
+}
+
+let _scoreRefreshTimer;
+function _debouncedScoreRefresh(){
+  clearTimeout(_scoreRefreshTimer);
+  _scoreRefreshTimer=setTimeout(()=>{
+    renderLB(); // recalculate everyone's scores
+    showAdminScoreSummary();
+  },300);
+}
+
+function showAdminScoreSummary(){
+  const el=document.getElementById('adm-live-scores');
+  if(!el)return;
+  const scored=S.p.map(p=>({name:p.name,id:p.id,sc:calcScore(p.id)})).sort((a,b)=>b.sc.total-a.sc.total);
+  const koCount=Object.values(S.res.ko||{}).filter(Boolean).length;
+  el.innerHTML=`<div style="font-size:.65rem;color:var(--gold);font-weight:600;margin-bottom:.35rem;text-transform:uppercase;letter-spacing:.08em">
+    Live Scores (${koCount} KO results entered)
+  </div>
+  ${scored.map((p,i)=>`<div style="display:flex;gap:.45rem;padding:.22rem 0;font-size:.74rem;border-bottom:1px solid var(--subtle);${i===scored.length-1?'border:none':''}">
+    <span style="color:var(--dim);min-width:1.2rem">${i+1}.</span>
+    <span style="flex:1">${esc(p.name)}</span>
+    <span style="color:var(--gold);font-family:'Bebas Neue',sans-serif;font-size:.88rem;min-width:3rem;text-align:right">${p.sc.total}pts</span>
+    <span style="color:var(--dim);font-size:.65rem;min-width:4rem;text-align:right">G${p.sc.group} K${p.sc.ko} F${p.sc.final}</span>
+  </div>`).join('')}`;
+}
+
+function showScoreDiag(){
+  const el=document.getElementById('adm-diag-body');
+  if(!el)return;
+  el.innerHTML='';
+  // Show every entry in res.ko and compare against each user's prediction
+  const koEntries=Object.entries(S.res.ko||{}).filter(([,v])=>v);
+  if(!koEntries.length){el.innerHTML='<p style="color:var(--dim);font-size:.73rem">No KO results entered yet.</p>';return;}
+  let html='';
+  koEntries.forEach(([mid,winner])=>{
+    const id=Number(mid);
+    const r=id<=88?'R32':id<=96?'R16':id<=100?'QF':id<=102?'SF':'Final';
+    const mt=(S.res.mt||{})[id]||{};
+    html+=`<div style="background:var(--n3);border-radius:var(--r);padding:.55rem .7rem;margin-bottom:.4rem">
+      <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.35rem">
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:.78rem;color:var(--dim)">${r} M${id}</span>
+        <span style="font-size:.78rem">${mt.t1?ti(mt.t1).f:''} ${mt.t1?esc(dname(mt.t1)):'?'} vs ${mt.t2?ti(mt.t2).f:''} ${mt.t2?esc(dname(mt.t2)):'?'}</span>
+        <span style="margin-left:auto;font-size:.75rem;font-weight:600;color:var(--green)">Winner: ${ti(winner).f} ${esc(dname(winner))}</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:.3rem">
+        ${S.p.map(p=>{
+          const pred=S.preds[p.id]||{};
+          const allPred={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{}),...(pred.fin||{})};
+          const userPick=allPred[mid]||allPred[String(id)]||null;
+          const correct=userPick&&userPick===winner;
+          const pts=correct?({R32:3,R16:4,QF:5,SF:6,Final:0}[r]||0):0;
+          return`<span style="font-size:.68rem;padding:.15rem .45rem;border-radius:10px;background:${correct?'rgba(46,204,113,.12)':'rgba(255,255,255,.05)'};border:1px solid ${correct?'rgba(46,204,113,.3)':'var(--subtle)'}">
+            ${esc(p.name)}: ${userPick?`${ti(userPick).f} ${esc(dname(userPick))}`:'no pick'}${correct?` ✓+${pts}`:' ✗'}
+          </span>`;
+        }).join('')}
+      </div>
+    </div>`;
+  });
+  el.innerHTML=html;
+}
 
 let _resultsDirty=false;
 function markResultsDirty(){
