@@ -2427,143 +2427,168 @@ function doSnap(id){
 function renderAdmin(){
   const c=document.getElementById('admin-content');
   const kickoffPast=isLocked();
+  const koCount=Object.values(S.res.ko||{}).filter(Boolean).length;
+  const grpCount=Object.keys(S.res.groups||{}).length;
 
-  // Firebase setup section
-  let html=`<div id="fb-setup-section" style="background:linear-gradient(135deg,rgba(100,180,255,.08),rgba(100,180,255,.03));border:1px solid rgba(100,180,255,.25);border-radius:13px;padding:1.1rem;margin-bottom:1rem">
-    <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--blue);letter-spacing:.1em;margin-bottom:.22rem">Cloud Sync Setup</div>
-    <p style="font-size:.72rem;color:var(--muted);line-height:1.55;margin-bottom:.75rem">Connect a free Firebase Realtime Database so everyone's predictions sync automatically. Takes about 2 minutes.</p>
-    <div style="background:var(--n3);border:1px solid var(--subtle);border-radius:var(--r);padding:.7rem .85rem;margin-bottom:.75rem;font-size:.7rem;color:var(--muted);line-height:1.8">
-      <strong style="color:var(--text);display:block;margin-bottom:.3rem">How to set up (free, no card needed):</strong>
-      <div>1. Go to <strong style="color:var(--blue)">console.firebase.google.com</strong></div>
-      <div>2. Click <strong>Add project</strong> → name it anything → Continue → Continue → Create project</div>
-      <div>3. Click <strong>Realtime Database</strong> in the left menu → Create Database</div>
-      <div>4. Choose any location → Start in <strong>Test mode</strong> → Enable</div>
-      <div>5. Copy the database URL — it looks like: <strong style="color:var(--gold)">https://your-project-default-rtdb.firebaseio.com</strong></div>
-      <div>6. Paste it below and tap Save</div>
-    </div>
-    <div style="display:flex;gap:.45rem;align-items:center;flex-wrap:wrap">
-      <input id="fb-url-input" type="url" placeholder="https://your-project-default-rtdb.firebaseio.com"
-        value="${FB_URL || 'https://worldcup2026-17201-default-rtdb.firebaseio.com'}" style="flex:1;min-width:220px;font-size:.72rem" />
-      <button class="btn btn-sm" style="background:var(--blue);color:var(--navy)" id="fb-save-btn">Save & Test</button>
-      ${FB_URL?'<button class="btn btn-ghost btn-sm" onclick="clearFBUrl()">Clear</button>':''}
-    </div>
-    <div id="fb-test-result" style="margin-top:.45rem;font-size:.7rem"></div>
-    ${FB_URL?`<div class="ok" style="margin-top:.5rem;font-size:.7rem">Firebase URL saved. Go to Home tab to create or join a group.</div>`:''}
-  </div>`;
-  html+=`<div class="fetch-panel">
-    <h3>Auto-Fetch Live Results</h3>
-    <p>From June 11, tap <strong>Fetch Latest Results</strong> and Claude will search the web for current standings and knockout results, then update everyone's scores automatically.</p>
-    <div class="info" style="font-size:.7rem;margin-bottom:.65rem">
-      <strong>One-time Vercel setup needed:</strong><br>
-      1. In your Vercel project → <strong>Settings → Environment Variables</strong><br>
-      2. Add: <code style="background:var(--navy);padding:.1rem .3rem;border-radius:3px">ANTHROPIC_API_KEY</code> = your key from <strong>console.anthropic.com</strong><br>
-      3. Make sure <strong>api/fetch-results.js</strong> is deployed alongside index.html<br>
-      4. Redeploy — then this button will work on June 11!
-    </div>
-    <div style="display:flex;gap:.42rem;flex-wrap:wrap;align-items:center">
-      <button class="btn" id="fetch-btn" ${kickoffPast?'':'style="opacity:.5;cursor:not-allowed" disabled'}>${kickoffPast?'🔄 Fetch Latest Results':'⏳ Available from June 11'}</button>
-      <button class="btn btn-ghost btn-sm" id="fetch-force-btn">Test Now</button>
-      <span id="fetch-status" style="font-size:.68rem;color:var(--muted)"></span>
-    </div>
-    <div class="fetch-log" id="fetch-log"></div>
-    <div class="fetch-preview" id="fetch-preview"><h4>Fetched Results — Review Before Applying</h4>
-      <div id="fetch-preview-body"></div>
-      <div style="display:flex;gap:.42rem;margin-top:.62rem;flex-wrap:wrap">
-        <button class="btn" id="fetch-apply">✅ Apply All Results</button>
-        <button class="btn btn-ghost btn-sm" id="fetch-discard">Discard</button>
-      </div></div>
-  </div>
-  <!-- SAVE & APPLY BUTTON (sticky top) -->
-  <div style="background:var(--n2);border:1px solid var(--border);border-radius:12px;padding:.85rem 1rem;margin-bottom:.85rem">
-    <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;justify-content:space-between">
+  let html=`
+
+  <!-- ═══════════════════════════════════════════════
+       MANUAL RESULTS ENTRY — always first, always visible
+  ═══════════════════════════════════════════════ -->
+  <div style="position:sticky;top:40px;z-index:100;background:var(--navy);padding:.5rem 0 .4rem;border-bottom:2px solid var(--gold);margin-bottom:.85rem">
+    <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;justify-content:space-between">
       <div>
-        <div style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold);letter-spacing:.1em">Manual Results Entry</div>
-        <div class="adm-save-count" style="font-size:.68rem;color:var(--muted);margin-top:.1rem">${Object.keys(S.res.groups||{}).length} groups + ${Object.values(S.res.ko||{}).filter(Boolean).length} match winners entered</div>
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--gold);letter-spacing:.1em">Manual Results Entry</span>
+        <span class="adm-save-count" style="font-size:.66rem;color:var(--muted);margin-left:.5rem">${grpCount}/12 groups · ${koCount} KO winners</span>
       </div>
-      <button class="btn adm-save-btn" style="font-size:.8rem;padding:.55rem 1.1rem" onclick="saveResults()">
-        💾 Save & Apply to Live Scores
+      <button class="btn adm-save-btn" style="font-size:.78rem;padding:.48rem 1rem" onclick="saveResults()">
+        💾 Save &amp; Apply to Live Scores
       </button>
-    </div>
-    <div style="font-size:.67rem;color:var(--dim);margin-top:.5rem;line-height:1.55">
-      Enter results below using the dropdowns, then tap <strong style="color:var(--gold)">Save & Apply</strong> to push scores to everyone in the group instantly. Changes are not live until you tap Save.
     </div>
   </div>
 
   <div class="sec">Group Stage Results</div>
-  <div class="info" style="font-size:.69rem">Enter the actual 1st, 2nd and 3rd for each group to drive scoring.</div>
+  <div class="info" style="font-size:.69rem;margin-bottom:.6rem">Pick 1st, 2nd, 3rd for each group that has finished. Tap <strong>Save & Apply</strong> when done.</div>
   <div class="g-grid">`;
   GKEYS.forEach(g=>{
     const gr=(S.res.groups&&S.res.groups[g])||{};
-    html+=`<div class="g-card"><div class="g-head"><span>Group ${g}</span></div><div style="padding:.5rem">
+    const done=gr.first&&gr.second&&gr.third;
+    html+=`<div class="g-card" ${done?'style="border-color:rgba(46,204,113,.35)"':''}><div class="g-head"><span>Group ${g}</span>${done?'<span style="color:var(--green);font-size:.7rem">✓</span>':''}</div><div style="padding:.5rem">
       <div style="margin-bottom:.36rem"><label>1st</label><select class="adm-sel" data-g="${g}" data-pos="first" style="width:100%"><option value="">-</option>${GROUPS[g].teams.map(t=>`<option value="${t.n}" ${gr.first===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select></div>
       <div style="margin-bottom:.36rem"><label>2nd</label><select class="adm-sel" data-g="${g}" data-pos="second" style="width:100%"><option value="">-</option>${GROUPS[g].teams.map(t=>`<option value="${t.n}" ${gr.second===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select></div>
       <div><label>3rd</label><select class="adm-sel" data-g="${g}" data-pos="third" style="width:100%"><option value="">-</option>${GROUPS[g].teams.map(t=>`<option value="${t.n}" ${gr.third===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select></div>
     </div></div>`;
   });
-  html+=`</div><div class="sec" style="margin-top:.8rem">Best 3rd Qualifiers (Actual)</div>
+
+  html+=`</div>
+
+  <div class="sec" style="margin-top:.8rem">Best 3rd Qualifiers (Actual)</div>
   <div class="b3-grid" id="adm-b3">`;
   const thirds3=[];GKEYS.forEach(g=>{const gr=S.res.groups&&S.res.groups[g];if(gr&&gr.third)thirds3.push({n:gr.third,g});});
   const rb3=S.res.best3||[];
   thirds3.forEach(t=>{const info=ti(t.n);const s=rb3.includes(t.n);html+=`<div class="b3-item ${s?'sel':''}" data-team="${t.n}"><span style="font-size:.88rem">${info.f}</span><span style="font-size:.73rem;font-weight:500">${esc(dname(t.n))}</span><span style="font-size:.56rem;color:var(--dim);margin-left:auto">Grp ${t.g}</span><span class="b3-chk">v</span></div>`;});
   if(!thirds3.length)html+=`<p style="color:var(--dim);font-size:.7rem">Fill group 3rd results first.</p>`;
   html+=`</div><p style="font-size:.66rem;color:var(--muted);margin:.22rem 0 .65rem">${rb3.length}/8 selected</p>`;
-  const admRounds=[{lbl:'Round of 32',ids:Array.from({length:16},(_,i)=>73+i)},{lbl:'Round of 16',ids:Array.from({length:8},(_,i)=>89+i)},{lbl:'QF',ids:[97,98,99,100]},{lbl:'SF',ids:[101,102]},{lbl:'3rd Place',ids:[103]},{lbl:'Final',ids:[104]}];
+
+  // KO Rounds
+  const admRounds=[
+    {lbl:'Round of 32',ids:Array.from({length:16},(_,i)=>73+i)},
+    {lbl:'Round of 16',ids:Array.from({length:8},(_,i)=>89+i)},
+    {lbl:'Quarter-Finals',ids:[97,98,99,100]},
+    {lbl:'Semi-Finals',ids:[101,102]},
+    {lbl:'3rd Place Match',ids:[103]},
+    {lbl:'Final',ids:[104]}
+  ];
   admRounds.forEach(({lbl,ids})=>{
-    html+=`<div class="sec" style="margin-top:.78rem">${lbl}</div>`;
+    const doneInRound=ids.filter(id=>(S.res.ko||{})[id]).length;
+    html+=`<div class="sec" style="margin-top:.78rem">${lbl} <span style="font-size:.65rem;color:var(--dim);font-family:'DM Sans',sans-serif;font-weight:400">${doneInRound>0?`${doneInRound}/${ids.length} entered`:''}</span></div>`;
     ids.forEach(id=>{
-      const mt=(S.res.mt||{})[id]||{t1:null,t2:null};const winner=(S.res.ko||{})[id];
-      html+=`<div class="adm-match"><span class="adm-lbl">M${id}</span>
-        <select class="adm-sel adm-mt" data-id="${id}" data-side="t1"><option value="">Team 1</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${mt.t1===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select>
+      const mt=(S.res.mt||{})[id]||{t1:null,t2:null};
+      const winner=(S.res.ko||{})[id];
+      const winnerSet=!!winner;
+      html+=`<div class="adm-match" style="${winnerSet?'border-color:rgba(46,204,113,.35)':''}">
+        <span class="adm-lbl" style="color:var(--dim)">M${id}</span>
+        <select class="adm-sel adm-mt" data-id="${id}" data-side="t1" style="flex:1"><option value="">Team 1</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${mt.t1===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select>
         <span style="color:var(--dim);font-size:.68rem">vs</span>
-        <select class="adm-sel adm-mt" data-id="${id}" data-side="t2"><option value="">Team 2</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${mt.t2===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select>
-        <span style="color:var(--dim);font-size:.6rem">Winner:</span>
-        <select class="adm-sel adm-win" data-id="${id}"><option value="">-</option>
+        <select class="adm-sel adm-mt" data-id="${id}" data-side="t2" style="flex:1"><option value="">Team 2</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${mt.t2===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select>
+        <select class="adm-sel adm-win" data-id="${id}" style="flex:1;${winnerSet?'border-color:var(--green);color:var(--green)':'border-color:rgba(204,41,54,.4)'}">
+          <option value="">Winner ↓</option>
           ${mt.t1?`<option value="${mt.t1}" ${winner===mt.t1?'selected':''}>${ti(mt.t1).f} ${esc(dname(mt.t1))}</option>`:''}
           ${mt.t2?`<option value="${mt.t2}" ${winner===mt.t2?'selected':''}>${ti(mt.t2).f} ${esc(dname(mt.t2))}</option>`:''}
-          <optgroup label="Any">${ALL_TEAMS.map(t=>`<option value="${t.n}" ${winner===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</optgroup>
-        </select></div>`;
+          <optgroup label="All teams">${ALL_TEAMS.map(t=>`<option value="${t.n}" ${winner===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</optgroup>
+        </select>
+        ${winnerSet?`<span style="color:var(--green);font-size:.8rem;flex-shrink:0">✓</span>`:`<span style="color:var(--dim);font-size:.7rem;flex-shrink:0">-</span>`}
+      </div>`;
     });
   });
-  html+=`<div class="sec" style="margin-top:.78rem">Champion and Runner-Up</div>
+
+  html+=`
+  <div class="sec" style="margin-top:.78rem">Champion and Runner-Up</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:.62rem;margin-bottom:.82rem">
     <div><label>Champion</label><select class="adm-sel" id="adm-champ" style="width:100%"><option value="">-</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${S.res.champion===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select></div>
     <div><label>Runner-Up</label><select class="adm-sel" id="adm-runner" style="width:100%"><option value="">-</option>${ALL_TEAMS.map(t=>`<option value="${t.n}" ${S.res.runnerUp===t.n?'selected':''}>${t.f} ${esc(dname(t.n))}</option>`).join('')}</select></div>
   </div>
-  <div class="divider"></div>
-  <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.65rem;align-items:center">
-    <button class="btn adm-save-btn" style="font-size:.82rem;padding:.58rem 1.2rem;flex:1;min-width:200px" onclick="saveResults()">
-      💾 Save & Apply to Live Scores
+
+  <!-- BOTTOM SAVE BUTTON -->
+  <div style="background:linear-gradient(135deg,rgba(201,168,76,.1),rgba(201,168,76,.04));border:1px solid var(--border);border-radius:12px;padding:.85rem 1rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
+    <div style="font-size:.72rem;color:var(--muted)">When done entering results, tap Save to update live scores for everyone.</div>
+    <button class="btn adm-save-btn" style="font-size:.82rem;padding:.6rem 1.4rem" onclick="saveResults()">
+      💾 Save &amp; Apply to Live Scores
     </button>
   </div>
-  <div style="display:flex;gap:.4rem;flex-wrap:wrap">
-    <button class="btn btn-danger btn-sm" id="adm-reset">Reset All</button>
+
+  <div class="divider"></div>
+  <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem">
+    <button class="btn btn-danger btn-sm" id="adm-reset">Reset All Data</button>
     <button class="btn btn-ghost btn-sm" id="adm-export">Export JSON</button>
     <button class="btn btn-ghost btn-sm" id="adm-import">Import JSON</button>
-  </div>`;
+  </div>
+
+  <!-- AUTO-FETCH (collapsed by default) -->
+  <details style="margin-bottom:.75rem">
+    <summary style="cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold);letter-spacing:.1em;padding:.5rem 0;user-select:none">
+      🤖 Auto-Fetch via API (optional)
+    </summary>
+    <div class="fetch-panel" style="margin-top:.55rem">
+      <p style="font-size:.72rem;color:var(--muted);line-height:1.55;margin-bottom:.65rem">Automatically searches the web for current results. Requires ANTHROPIC_API_KEY in Vercel environment variables.</p>
+      <div style="display:flex;gap:.42rem;flex-wrap:wrap;align-items:center">
+        <button class="btn" id="fetch-btn" ${kickoffPast?'':'style="opacity:.5;cursor:not-allowed" disabled'}>${kickoffPast?'🔄 Fetch Latest Results':'⏳ Available from June 11'}</button>
+        <button class="btn btn-ghost btn-sm" id="fetch-force-btn">Test Now</button>
+        <span id="fetch-status" style="font-size:.68rem;color:var(--muted)"></span>
+      </div>
+      <div class="fetch-log" id="fetch-log"></div>
+      <div class="fetch-preview" id="fetch-preview"><h4>Fetched Results — Review Before Applying</h4>
+        <div id="fetch-preview-body"></div>
+        <div style="display:flex;gap:.42rem;margin-top:.62rem;flex-wrap:wrap">
+          <button class="btn" id="fetch-apply">✅ Apply All Results</button>
+          <button class="btn btn-ghost btn-sm" id="fetch-discard">Discard</button>
+        </div>
+      </div>
+    </div>
+  </details>
+
+  <!-- FIREBASE SETUP (collapsed by default) -->
+  <details>
+    <summary style="cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--blue);letter-spacing:.1em;padding:.5rem 0;user-select:none">
+      ☁️ Cloud Sync Setup
+    </summary>
+    <div id="fb-setup-section" style="background:linear-gradient(135deg,rgba(100,180,255,.08),rgba(100,180,255,.03));border:1px solid rgba(100,180,255,.25);border-radius:13px;padding:1rem;margin-top:.55rem">
+      <p style="font-size:.71rem;color:var(--muted);line-height:1.55;margin-bottom:.65rem">Connect a free Firebase Realtime Database so everyone syncs automatically.</p>
+      <div style="display:flex;gap:.45rem;align-items:center;flex-wrap:wrap">
+        <input id="fb-url-input" type="url" placeholder="https://your-project-default-rtdb.firebaseio.com"
+          value="${FB_URL || 'https://worldcup2026-17201-default-rtdb.firebaseio.com'}" style="flex:1;min-width:220px;font-size:.72rem" />
+        <button class="btn btn-sm" style="background:var(--blue);color:var(--navy)" id="fb-save-btn">Save & Test</button>
+        ${FB_URL?'<button class="btn btn-ghost btn-sm" onclick="clearFBUrl()">Clear</button>':''}
+      </div>
+      <div id="fb-test-result" style="margin-top:.45rem;font-size:.7rem"></div>
+      ${FB_URL?`<div class="ok" style="margin-top:.5rem;font-size:.7rem">✓ Firebase connected.</div>`:''}
+    </div>
+  </details>`;
+
   c.innerHTML=html;
   c.querySelectorAll('.adm-sel[data-g]').forEach(sel=>sel.addEventListener('change',function(){setGR(this.dataset.g,this.dataset.pos,this.value);}));
   c.querySelectorAll('#adm-b3 .b3-item').forEach(el=>el.addEventListener('click',function(){toggleRB3(this.dataset.team);}));
   c.querySelectorAll('.adm-mt').forEach(sel=>sel.addEventListener('change',function(){setMT(Number(this.dataset.id),this.dataset.side,this.value);}));
   c.querySelectorAll('.adm-win').forEach(sel=>sel.addEventListener('change',function(){
     setKOR(Number(this.dataset.id),this.value);
-    // Highlight the winner select green when set
-    this.style.borderColor = this.value ? 'var(--green)' : '';
+    this.style.borderColor = this.value ? 'var(--green)' : 'rgba(204,41,54,.4)';
     this.style.color = this.value ? 'var(--green)' : '';
+    // Show ✓ or - next to match row
+    const row=this.closest('.adm-match');
+    if(row){const ind=row.querySelector('span:last-child');if(ind){ind.textContent=this.value?'✓':'-';ind.style.color=this.value?'var(--green)':'var(--dim)';}}
     updateSaveBtnCount();
+    markResultsDirty();
   }));
-  // Restore green highlights for already-set winners on render
-  c.querySelectorAll('.adm-win').forEach(sel=>{
-    if(sel.value){sel.style.borderColor='var(--green)';sel.style.color='var(--green)';}
-  });
-  document.getElementById('adm-champ').addEventListener('change',function(){S.res.champion=this.value;save();toast('Champion: '+(this.value||'-'));});
-  document.getElementById('adm-runner').addEventListener('change',function(){S.res.runnerUp=this.value;save();toast('Runner-up: '+(this.value||'-'));});
+  // Wire champion/runner-up
+  document.getElementById('adm-champ').addEventListener('change',function(){S.res.champion=this.value;saveLocal();markResultsDirty();});
+  document.getElementById('adm-runner').addEventListener('change',function(){S.res.runnerUp=this.value;saveLocal();markResultsDirty();});
   document.getElementById('adm-reset').addEventListener('click',resetAll);
   document.getElementById('adm-export').addEventListener('click',exportJ);
   document.getElementById('adm-import').addEventListener('click',importJ);
   // Firebase URL save
   document.getElementById('fb-save-btn')?.addEventListener('click', async () => {
     const inp = document.getElementById('fb-url-input');
-    const url = (inp?.value||'').trim().replace(/\/+$/, ''); // strip trailing slash
+    const url = (inp?.value||'').trim().replace(/\/+$/, '');
     if (!url) { toast('Paste your Firebase URL first'); return; }
     if (!url.startsWith('https://') || !url.includes('firebaseio.com')) {
       toast('Invalid URL — should be https://your-project-default-rtdb.firebaseio.com'); return;
@@ -2577,16 +2602,16 @@ function renderAdmin(){
       if (r.ok) {
         FB_URL = url;
         localStorage.setItem('wc26_fb_url', url);
-        result.textContent = 'Connected! Go to Home tab to create or join a group.';
+        result.textContent = 'Connected!';
         result.style.color = 'var(--green)';
         renderSyncCard();
         toast('Firebase connected!');
       } else {
-        result.textContent = 'Connection failed (' + r.status + '). Check the URL and make sure Test Mode rules are enabled.';
+        result.textContent = 'Connection failed (' + r.status + ')';
         result.style.color = 'var(--red)';
       }
     } catch(e) {
-      result.textContent = 'Could not connect — check the URL is correct.';
+      result.textContent = 'Could not connect — check the URL.';
       result.style.color = 'var(--red)';
     }
   });
