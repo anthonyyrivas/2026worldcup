@@ -1092,18 +1092,24 @@ function renderPred(){
       <button class="btn btn-ghost btn-sm" onclick="clearStep()">↺ Clear</button>
     </div>
     <button class="btn btn-wa btn-sm" onclick="openShare('${CUR_USER}')">Share</button>
-  </div>`:`<div style="display:flex;justify-content:center;gap:.45rem;margin-top:.7rem;flex-wrap:wrap">
-    <button class="btn btn-wa" onclick="openShare('${CUR_USER}')">Share My Full Bracket</button>
-    <button class="btn btn-ghost" onclick="openPubBracket()">View Public Bracket</button>
+  </div>`:`<div style="position:sticky;bottom:0;background:var(--navy);border-top:1px solid var(--subtle);padding:.5rem 0;margin-top:.6rem">
+    <div style="font-size:.67rem;color:var(--dim);text-align:center;margin-bottom:.38rem">
+      👁 View mode — tap any step dot above to browse picks
+    </div>
+    <div style="display:flex;justify-content:center;gap:.42rem;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" id="back-btn-locked">← Back</button>
+      <button class="btn btn-wa btn-sm" onclick="openShare('${CUR_USER}')">Share</button>
+      <button class="btn btn-ghost btn-sm" onclick="openPubBracket()">Public Bracket</button>
+    </div>
   </div>`}`;
 
-  wrap.querySelectorAll('.s-dot').forEach(dot=>{
-    dot.addEventListener('click',()=>locked?toast('Predictions are locked - World Cup has started'):goStep(dot.dataset.step));
+  // Wire back button for both locked and unlocked
+  wrap.querySelectorAll('#back-btn, #back-btn-locked').forEach(btn=>{
+    if(btn&&prevStep) btn.addEventListener('click',()=>goStep(prevStep));
   });
-  if(prevStep) {
-    const backBtn = wrap.querySelector('#back-btn');
-    if(backBtn) backBtn.addEventListener('click',()=>goStep(prevStep));
-  }
+  wrap.querySelectorAll('.s-dot').forEach(dot=>{
+    dot.addEventListener('click',()=>goStep(dot.dataset.step));
+  });
   renderStepBody(pred,locked);
 }
 
@@ -1958,21 +1964,22 @@ function calcScore(uid){
   });
   (res.best3||[]).forEach(t=>{ if((pred.best3||[]).includes(t)) group += PTS.best3; });
 
-  // --- Knockout rounds (R32 through SF + Final match) ---
-  // Include fin picks (Final match M104) alongside bracket picks
+  // --- Knockout rounds (R32 through SF) ---
+  // Match 104 (Final) is excluded here — champion/runner-up handled separately below
   const allPred = {
     ...(pred.r32||{}),
     ...(pred.r16||{}),
     ...(pred.qf||{}),
     ...(pred.sf||{}),
-    ...(pred.fin||{}),  // ← was missing — Final match pick
+    ...(pred.fin||{}),
   };
   Object.entries(res.ko||{}).forEach(([mid, winner])=>{
     if(!winner) return;
+    const id = Number(mid);
+    if(id === 104) return; // Final match — scored via champion/runner-up below
     const predWinner = allPred[mid];
     if(!predWinner || predWinner !== winner) return;
-    const id = Number(mid);
-    const r = id<=88?'R32': id<=96?'R16': id<=100?'QF': id<=102?'SF': 'Final';
+    const r = id<=88?'R32': id<=96?'R16': id<=100?'QF': 'SF';
     ko += PTS[r] || 0;
   });
 
@@ -2029,14 +2036,38 @@ function calcBreakdown(uid){
   Object.entries(res.ko||{}).forEach(([mid,winner])=>{
     if(!winner)return;
     const id=Number(mid);
-    const r=id<=88?'R32':id<=96?'R16':id<=100?'QF':id<=102?'SF':'Final';
+    if(id===104)return; // handled separately via champion/runner-up
+    const r=id<=88?'R32':id<=96?'R16':id<=100?'QF':'SF';
     rounds[r].total++;
     if(allPred[mid]===winner)rounds[r].correct++;
   });
 
-  // --- Champion/Runner-up ---
-  const champCorrect=!!(res.champion&&pred.champion===res.champion);
-  const ruCorrect=!!(res.runnerUp&&pred.runnerUp===res.runnerUp);
+  // --- Champion/Runner-up (handle both new-style fin and old-style champion fields) ---
+  const finPick2 = pred.fin&&pred.fin[104] || null;
+  const predChamp2 = finPick2 || pred.champion || null;
+  const sfT1 = pred.sf&&pred.sf[101]||null, sfT2 = pred.sf&&pred.sf[102]||null;
+  const predRU2 = finPick2 ? (finPick2===sfT1?sfT2:sfT1)||pred.runnerUp : pred.runnerUp||null;
+  const champCorrect=!!(res.champion && predChamp2===res.champion);
+  const ruCorrect=!!(res.runnerUp && predRU2===res.runnerUp);
+
+  // --- Per-match KO detail for report card ---
+  const allPred2={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{}),...(pred.fin||{})};
+  const koDetail=[]; // {matchId, round, yourPick, actual, correct, noResult}
+  const roundMatches={R32:R32,R16,QF,SF};
+  Object.entries(roundMatches).forEach(([rnd,matches])=>{
+    matches.forEach(m=>{
+      const yourPick=allPred2[m.id]||null;
+      const actual=(res.ko||{})[m.id]||null;
+      const mt=(res.mt||{})[m.id]||{};
+      if(yourPick||actual){ // only show if user picked OR result exists
+        koDetail.push({matchId:m.id,round:rnd,yourPick,actual,correct:!!(yourPick&&actual&&yourPick===actual),noResult:!actual,mt});
+      }
+    });
+  });
+  // Final match
+  const finalPick=allPred2[104]||null;
+  const finalActual=(res.ko||{})[104]||null;
+  koDetail.push({matchId:104,round:'Final',yourPick:finalPick,actual:finalActual,correct:!!(finalPick&&finalActual&&finalPick===finalActual),noResult:!finalActual,mt:(res.mt||{})[104]||{}});
 
   // --- Overall grade ---
   const totalCorrect=g1Correct+g2Correct+g3Correct+b3Correct+
@@ -2057,8 +2088,8 @@ function calcBreakdown(uid){
   else{grade='F';gradeColor='var(--red)';gradeLabel='Back to School';}
 
   return{hasRes,g1Correct,g1Total,g2Correct,g2Total,g3Correct,g3Total,
-    b3Correct,b3Total,rounds,champCorrect,ruCorrect,
-    totalCorrect,totalPossible,pct,grade,gradeColor,gradeLabel};
+    b3Correct,b3Total,rounds,champCorrect,ruCorrect,predChamp2,predRU2,
+    totalCorrect,totalPossible,pct,grade,gradeColor,gradeLabel,koDetail};
 }
 
 function showRC(uid){
@@ -2126,7 +2157,8 @@ function showRC(uid){
       const {correct,total}=b.rounds[r];
       const labels={R32:'Round of 32',R16:'Round of 16',QF:'Quarter-Finals',SF:'Semi-Finals',Final:'The Final'};
       const colors={R32:'var(--muted)',R16:'var(--blue)',QF:'var(--gold)',SF:'#FF8C00',Final:'var(--red)'};
-      if(!total)return`<div class="rc-stat"><span class="rc-stat-label" style="color:var(--dim)">${labels[r]}</span><span class="rc-stat-val" style="color:var(--dim)">—</span></div>`;
+      if(!total&&!b.koDetail.filter(d=>d.round===r&&d.yourPick).length)
+        return`<div class="rc-stat"><span class="rc-stat-label" style="color:var(--dim)">${labels[r]}</span><span class="rc-stat-val" style="color:var(--dim)">—</span></div>`;
       return`<div class="rc-stat">
         <span class="rc-stat-label">${labels[r]}</span>
         ${bar(correct,total,colors[r])}
@@ -2134,22 +2166,45 @@ function showRC(uid){
         ${badge(correct,total)}
       </div>`;
     }).join('')}
+
+    ${b.hasRes&&b.koDetail.some(d=>d.yourPick)?`
+    <details style="margin-top:.5rem">
+      <summary style="font-size:.68rem;color:var(--blue);cursor:pointer;user-select:none;padding:.25rem 0">
+        Show pick-by-pick breakdown
+      </summary>
+      <div style="margin-top:.4rem;display:flex;flex-direction:column;gap:.18rem">
+        ${b.koDetail.filter(d=>d.yourPick).map(d=>{
+          const pickInfo=ti(d.yourPick);
+          const actualInfo=d.actual?ti(d.actual):null;
+          const rndLbl={R32:'R32',R16:'R16',QF:'QF',SF:'SF',Final:'Final'}[d.round];
+          return`<div style="display:flex;align-items:center;gap:.35rem;padding:.28rem .4rem;background:${d.correct?'rgba(46,204,113,.06)':d.noResult?'var(--n3)':'rgba(204,41,54,.06)'};border-radius:4px;font-size:.69rem">
+            <span style="color:var(--dim);min-width:2.2rem">${rndLbl}</span>
+            <span style="color:var(--dim);min-width:1.8rem">M${d.matchId}</span>
+            <span>${pickInfo.f} ${esc(dname(d.yourPick))}</span>
+            <span style="margin-left:auto;flex-shrink:0">
+              ${d.noResult?`<span style="color:var(--dim)">⏳ pending</span>`
+              :d.correct?`<span style="color:var(--green)">✓ +${({R32:3,R16:4,QF:5,SF:6}[d.round]||0)}pts</span>`
+              :`<span style="color:#FF9999">✗ (${actualInfo?actualInfo.f+' '+esc(dname(d.actual)):'?'})</span>`}
+            </span>
+          </div>`;
+        }).join('')}
+      </div>
+    </details>`:''}
   </div>
 
   <div class="rc-section">
     <div class="rc-sec-title">Final Predictions</div>
     <div class="rc-stat">
       <span class="rc-stat-label">🏆 Champion pick</span>
-      <span class="rc-stat-val">${pred.champion?`${ti(pred.champion).f} ${esc(dname(pred.champion))}`:'—'}</span>
-      ${b.hasRes&&res.champion?b.champCorrect?`<span class="rc-badge rc-badge-green">Correct! ✓</span>`:`<span class="rc-badge rc-badge-red">Wrong</span>`:''}
+      <span class="rc-stat-val">${b.predChamp2?`${ti(b.predChamp2).f} ${esc(dname(b.predChamp2))}`:'—'}</span>
+      ${b.hasRes&&res.champion?b.champCorrect?`<span class="rc-badge rc-badge-green">Correct! ✓</span>`:`<span class="rc-badge rc-badge-red">Wrong (${ti(res.champion).f} ${esc(dname(res.champion))})</span>`:''}
     </div>
     <div class="rc-stat">
       <span class="rc-stat-label">🥈 Runner-up pick</span>
-      <span class="rc-stat-val">${pred.runnerUp?`${ti(pred.runnerUp).f} ${esc(dname(pred.runnerUp))}`:'—'}</span>
-      ${b.hasRes&&res.runnerUp?b.ruCorrect?`<span class="rc-badge rc-badge-green">Correct! ✓</span>`:`<span class="rc-badge rc-badge-red">Wrong</span>`:''}
+      <span class="rc-stat-val">${b.predRU2?`${ti(b.predRU2).f} ${esc(dname(b.predRU2))}`:'—'}</span>
+      ${b.hasRes&&res.runnerUp?b.ruCorrect?`<span class="rc-badge rc-badge-green">Correct! ✓</span>`:`<span class="rc-badge rc-badge-red">Wrong (${ti(res.runnerUp).f} ${esc(dname(res.runnerUp))})</span>`:''}
     </div>
   </div>
-
   ${pred.hotTake?.trim()?`
   <div class="rc-section">
     <div class="rc-sec-title">🔥 Hot Take</div>
