@@ -1971,24 +1971,28 @@ function calcScore(uid){
   });
   (res.best3||[]).forEach(t=>{ if((pred.best3||[]).includes(t)) group += PTS.best3; });
 
-  // --- Knockout rounds (R32 through SF) ---
-  // Match 104 (Final) is excluded here — champion/runner-up handled separately below
-  const allPred = {
-    ...(pred.r32||{}),
-    ...(pred.r16||{}),
-    ...(pred.qf||{}),
-    ...(pred.sf||{}),
-    ...(pred.fin||{}),
-  };
-  Object.entries(res.ko||{}).forEach(([mid, winner])=>{
-    if(!winner) return;
-    const id = Number(mid);
-    if(id === 104) return; // Final match — scored via champion/runner-up below
-    const predWinner = allPred[mid];
-    if(!predWinner || predWinner !== winner) return;
-    const r = id<=88?'R32': id<=96?'R16': id<=100?'QF': 'SF';
-    ko += PTS[r] || 0;
-  });
+  // --- Knockout rounds: team-advancement scoring ---
+  // A user gets points if they correctly predicted a team would advance from a round.
+  // This is ROUND-based, not match-slot-based, so it works regardless of bracket position.
+
+  // Build sets of actual winners per round from res.ko
+  const koEntries = Object.entries(res.ko||{});
+  const actualR32 = new Set(koEntries.filter(([id,w])=>w&&Number(id)>=73&&Number(id)<=88).map(([,w])=>w));
+  const actualR16 = new Set(koEntries.filter(([id,w])=>w&&Number(id)>=89&&Number(id)<=96).map(([,w])=>w));
+  const actualQF  = new Set(koEntries.filter(([id,w])=>w&&Number(id)>=97&&Number(id)<=100).map(([,w])=>w));
+  const actualSF  = new Set(koEntries.filter(([id,w])=>w&&Number(id)>=101&&Number(id)<=102).map(([,w])=>w));
+
+  // Build sets of teams the user predicted to advance from each round
+  const predR32 = new Set(Object.values(pred.r32||{}).filter(Boolean));
+  const predR16 = new Set(Object.values(pred.r16||{}).filter(Boolean));
+  const predQF  = new Set(Object.values(pred.qf||{}).filter(Boolean));
+  const predSF  = new Set(Object.values(pred.sf||{}).filter(Boolean));
+
+  // Award points for each correctly predicted advancing team
+  predR32.forEach(team=>{ if(actualR32.has(team)) ko+=PTS.R32; });
+  predR16.forEach(team=>{ if(actualR16.has(team)) ko+=PTS.R16; });
+  predQF.forEach(team=>{  if(actualQF.has(team))  ko+=PTS.QF;  });
+  predSF.forEach(team=>{  if(actualSF.has(team))  ko+=PTS.SF;  });
 
   // --- Champion & Runner-up ---
   // Support both new-style (pred.fin[104] → champion) and old-style (pred.champion directly)
@@ -2037,17 +2041,26 @@ function calcBreakdown(uid){
   });
   (res.best3||[]).forEach(t=>{b3Total++;if((pred.best3||[]).includes(t))b3Correct++;});
 
-  // --- Knockout rounds ---
+  // --- Knockout rounds (team-advancement based, same as calcScore) ---
   const allPred={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{}),...(pred.fin||{})};
   const rounds={R32:{correct:0,total:0},R16:{correct:0,total:0},QF:{correct:0,total:0},SF:{correct:0,total:0},Final:{correct:0,total:0}};
-  Object.entries(res.ko||{}).forEach(([mid,winner])=>{
-    if(!winner)return;
-    const id=Number(mid);
-    if(id===104)return; // handled separately via champion/runner-up
-    const r=id<=88?'R32':id<=96?'R16':id<=100?'QF':'SF';
-    rounds[r].total++;
-    if(allPred[mid]===winner)rounds[r].correct++;
-  });
+
+  const koE=Object.entries(res.ko||{});
+  const aR32=new Set(koE.filter(([id,w])=>w&&Number(id)>=73&&Number(id)<=88).map(([,w])=>w));
+  const aR16=new Set(koE.filter(([id,w])=>w&&Number(id)>=89&&Number(id)<=96).map(([,w])=>w));
+  const aQF =new Set(koE.filter(([id,w])=>w&&Number(id)>=97&&Number(id)<=100).map(([,w])=>w));
+  const aSF =new Set(koE.filter(([id,w])=>w&&Number(id)>=101&&Number(id)<=102).map(([,w])=>w));
+
+  // Count how many R32 results exist (for totals)
+  rounds.R32.total=aR32.size;
+  rounds.R16.total=aR16.size;
+  rounds.QF.total=aQF.size;
+  rounds.SF.total=aSF.size;
+
+  new Set(Object.values(pred.r32||{}).filter(Boolean)).forEach(t=>{if(aR32.has(t))rounds.R32.correct++;});
+  new Set(Object.values(pred.r16||{}).filter(Boolean)).forEach(t=>{if(aR16.has(t))rounds.R16.correct++;});
+  new Set(Object.values(pred.qf||{}).filter(Boolean)).forEach(t=>{if(aQF.has(t))rounds.QF.correct++;});
+  new Set(Object.values(pred.sf||{}).filter(Boolean)).forEach(t=>{if(aSF.has(t))rounds.SF.correct++;});
 
   // --- Champion/Runner-up (handle both new-style fin and old-style champion fields) ---
   const finPick2 = pred.fin&&pred.fin[104] || null;
@@ -2685,31 +2698,44 @@ function showAdminScoreSummary(){
 function showScoreDiag(){
   const el=document.getElementById('adm-diag-body');
   if(!el)return;
-  el.innerHTML='';
-  // Show every entry in res.ko and compare against each user's prediction
-  const koEntries=Object.entries(S.res.ko||{}).filter(([,v])=>v);
-  if(!koEntries.length){el.innerHTML='<p style="color:var(--dim);font-size:.73rem">No KO results entered yet.</p>';return;}
-  let html='';
-  koEntries.forEach(([mid,winner])=>{
-    const id=Number(mid);
-    const r=id<=88?'R32':id<=96?'R16':id<=100?'QF':id<=102?'SF':'Final';
-    const mt=(S.res.mt||{})[id]||{};
-    html+=`<div style="background:var(--n3);border-radius:var(--r);padding:.55rem .7rem;margin-bottom:.4rem">
-      <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.35rem">
-        <span style="font-family:'Bebas Neue',sans-serif;font-size:.78rem;color:var(--dim)">${r} M${id}</span>
-        <span style="font-size:.78rem">${mt.t1?ti(mt.t1).f:''} ${mt.t1?esc(dname(mt.t1)):'?'} vs ${mt.t2?ti(mt.t2).f:''} ${mt.t2?esc(dname(mt.t2)):'?'}</span>
-        <span style="margin-left:auto;font-size:.75rem;font-weight:600;color:var(--green)">Winner: ${ti(winner).f} ${esc(dname(winner))}</span>
+
+  const koE=Object.entries(S.res.ko||{}).filter(([,v])=>v);
+  if(!koE.length){el.innerHTML='<p style="color:var(--dim);font-size:.73rem">No KO results entered yet.</p>';return;}
+
+  // Group winners by round
+  const byRound={R32:[],R16:[],QF:[],SF:[]};
+  koE.forEach(([id,winner])=>{
+    const n=Number(id);
+    const r=n>=73&&n<=88?'R32':n>=89&&n<=96?'R16':n>=97&&n<=100?'QF':n>=101&&n<=102?'SF':null;
+    if(r) byRound[r].push({id:n,winner});
+  });
+
+  let html='<div style="font-size:.7rem;color:var(--muted);margin-bottom:.55rem;line-height:1.6">Scoring is <strong style="color:var(--text)">team-based per round</strong>: if you predicted a team to win ANY match in a round, and they did, you get points — regardless of which specific slot they were in.</div>';
+
+  ['R32','R16','QF','SF'].forEach(r=>{
+    if(!byRound[r].length)return;
+    const pts={R32:3,R16:4,QF:5,SF:6}[r];
+    html+=`<div style="background:var(--n3);border-radius:var(--r);padding:.6rem .75rem;margin-bottom:.4rem">
+      <div style="font-size:.72rem;font-weight:600;color:var(--gold);margin-bottom:.4rem">${r} — ${byRound[r].length} result${byRound[r].length>1?'s':''} entered (+${pts}pts each)</div>
+      <div style="margin-bottom:.4rem;display:flex;flex-wrap:wrap;gap:.25rem">
+        ${byRound[r].map(({id,winner})=>`<span style="background:rgba(46,204,113,.1);border:1px solid rgba(46,204,113,.25);border-radius:8px;padding:.15rem .45rem;font-size:.7rem">${ti(winner).f} ${esc(dname(winner))} (M${id})</span>`).join('')}
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:.3rem">
+      <div style="display:flex;flex-direction:column;gap:.2rem">
         ${S.p.map(p=>{
           const pred=S.preds[p.id]||{};
-          const allPred={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{}),...(pred.fin||{})};
-          const userPick=allPred[mid]||allPred[String(id)]||null;
-          const correct=userPick&&userPick===winner;
-          const pts=correct?({R32:3,R16:4,QF:5,SF:6,Final:0}[r]||0):0;
-          return`<span style="font-size:.68rem;padding:.15rem .45rem;border-radius:10px;background:${correct?'rgba(46,204,113,.12)':'rgba(255,255,255,.05)'};border:1px solid ${correct?'rgba(46,204,113,.3)':'var(--subtle)'}">
-            ${esc(p.name)}: ${userPick?`${ti(userPick).f} ${esc(dname(userPick))}`:'no pick'}${correct?` ✓+${pts}`:' ✗'}
-          </span>`;
+          const pk={R32:'r32',R16:'r16',QF:'qf',SF:'sf'}[r];
+          const userPicks=new Set(Object.values(pred[pk]||{}).filter(Boolean));
+          const actualSet=new Set(byRound[r].map(x=>x.winner));
+          const hits=[...userPicks].filter(t=>actualSet.has(t));
+          const misses=[...userPicks].filter(t=>!actualSet.has(t));
+          const earned=hits.length*pts;
+          return`<div style="display:flex;align-items:flex-start;gap:.45rem;font-size:.7rem;padding:.18rem 0">
+            <span style="min-width:90px;font-weight:500">${esc(p.name)}</span>
+            <span style="color:var(--green)">${hits.map(t=>ti(t).f+' '+esc(dname(t))+' ✓').join(', ')||''}</span>
+            ${misses.length?`<span style="color:var(--dim)">✗ ${misses.map(t=>ti(t).f+' '+esc(dname(t))).join(', ')}</span>`:''}
+            ${!userPicks.size?`<span style="color:var(--dim)">no picks</span>`:''}
+            ${earned?`<span style="margin-left:auto;color:var(--gold);font-weight:600;font-family:'Bebas Neue',sans-serif">+${earned}pts</span>`:'<span style="margin-left:auto;color:var(--dim)">0pts</span>'}
+          </div>`;
         }).join('')}
       </div>
     </div>`;
