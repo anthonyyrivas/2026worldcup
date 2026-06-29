@@ -1944,32 +1944,65 @@ function renderPublicView(data){
    SCORING
    ============================================================== */
 function calcScore(uid){
-  const pred=S.preds[uid],res=S.res;
-  if(!pred)return{total:0,group:0,ko:0,final:0};
-  let group=0,ko=0,final=0;
+  const pred=S.preds[uid], res=S.res;
+  if(!pred) return{total:0,group:0,ko:0,final:0};
+  let group=0, ko=0, final=0;
+
+  // --- Group stage ---
   GKEYS.forEach(g=>{
-    const gp=pred.groups&&pred.groups[g],gr=res.groups&&res.groups[g];
-    if(!gp||!gr)return;
-    if(gr.first&&gp.first===gr.first)group+=PTS.group1;
-    if(gr.second&&gp.second===gr.second)group+=PTS.group2;
-    if(gr.third&&gp.third===gr.third)group+=PTS.group3;
+    const gp=pred.groups&&pred.groups[g], gr=res.groups&&res.groups[g];
+    if(!gp||!gr) return;
+    if(gr.first  && gp.first  === gr.first)  group += PTS.group1;
+    if(gr.second && gp.second === gr.second) group += PTS.group2;
+    if(gr.third  && gp.third  === gr.third)  group += PTS.group3;
   });
-  (res.best3||[]).forEach(t=>{if((pred.best3||[]).includes(t))group+=PTS.best3;});
-  const allPred={...(pred.r32||{}),...(pred.r16||{}),...(pred.qf||{}),...(pred.sf||{})};
-  Object.entries(res.ko||{}).forEach(([mid,winner])=>{
-    if(!winner||!allPred[mid]||allPred[mid]!==winner)return;
-    const id=Number(mid);
-    const r=id<=88?'R32':id<=96?'R16':id<=100?'QF':id<=102?'SF':'Final';
-    ko+=PTS[r]||0;
+  (res.best3||[]).forEach(t=>{ if((pred.best3||[]).includes(t)) group += PTS.best3; });
+
+  // --- Knockout rounds (R32 through SF + Final match) ---
+  // Include fin picks (Final match M104) alongside bracket picks
+  const allPred = {
+    ...(pred.r32||{}),
+    ...(pred.r16||{}),
+    ...(pred.qf||{}),
+    ...(pred.sf||{}),
+    ...(pred.fin||{}),  // ← was missing — Final match pick
+  };
+  Object.entries(res.ko||{}).forEach(([mid, winner])=>{
+    if(!winner) return;
+    const predWinner = allPred[mid];
+    if(!predWinner || predWinner !== winner) return;
+    const id = Number(mid);
+    const r = id<=88?'R32': id<=96?'R16': id<=100?'QF': id<=102?'SF': 'Final';
+    ko += PTS[r] || 0;
   });
-  if(res.champion&&pred.champion===res.champion)final+=PTS.champion;
-  if(res.runnerUp&&pred.runnerUp===res.runnerUp)final+=PTS.runnerUp;
-  if(res.champion&&res.runnerUp){
-    const fins=new Set([res.champion,res.runnerUp]);
-    if(fins.has(pred.champion))final+=PTS.finalist;
-    if(fins.has(pred.runnerUp)&&pred.runnerUp!==pred.champion)final+=PTS.finalist;
+
+  // --- Champion & Runner-up ---
+  // Support both new-style (pred.fin[104] → champion) and old-style (pred.champion directly)
+  const t1 = pred.sf&&pred.sf[101] || null;
+  const t2 = pred.sf&&pred.sf[102] || null;
+  const finPick = pred.fin&&pred.fin[104] || null;
+  const predChampion  = finPick || pred.champion || null;
+  const predRunnerUp  = finPick ? (finPick===t1 ? t2 : t1) || pred.runnerUp : pred.runnerUp || null;
+
+  if(res.champion && predChampion === res.champion)  final += PTS.champion;
+  if(res.runnerUp && predRunnerUp === res.runnerUp)  final += PTS.runnerUp;
+
+  // Finalist bonus (+8 per finalist correctly identified, regardless of order)
+  // i.e. if you picked a team that makes the final, you get +8 even if wrong about champion/runner-up
+  if(res.champion && res.runnerUp){
+    const actualFinalists = new Set([res.champion, res.runnerUp]);
+    const predFinalists   = new Set([predChampion, predRunnerUp].filter(Boolean));
+    predFinalists.forEach(team=>{
+      if(actualFinalists.has(team)){
+        // Only award finalist bonus if NOT already getting champion or runner-up bonus for this team
+        const getsChamp = team===res.champion && predChampion===res.champion;
+        const getsRU    = team===res.runnerUp  && predRunnerUp ===res.runnerUp;
+        if(!getsChamp && !getsRU) final += PTS.finalist;
+      }
+    });
   }
-  return{total:group+ko+final,group,ko,final};
+
+  return{total:group+ko+final, group, ko, final};
 }
 
 /* ==============================================================
@@ -2155,9 +2188,26 @@ function renderLB(){
   const scored=S.p.map(p=>({...p,sc:calcScore(p.id),pct:completeness(S.preds[p.id])})).sort((a,b)=>b.sc.total-a.sc.total);
   const hasRes=Object.keys(S.res.groups||{}).length>0||Object.keys(S.res.ko||{}).length>0;
   const newRanks={};scored.forEach((p,i)=>{newRanks[p.id]=i+1;});
+  const now=new Date();
+  const timeStr=now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   let html='';
-  if(!hasRes)html+=`<div class="info">Scores activate when the tournament starts June 11, 2026. Make sure everyone submits before kickoff!</div>`;
-  else html+=`<div style="background:linear-gradient(135deg,rgba(204,41,54,.1),rgba(204,41,54,.05));border:1px solid rgba(204,41,54,.3);border-radius:var(--r);padding:.6rem .85rem;font-size:.72rem;color:#FF9999;margin-bottom:.7rem;display:flex;align-items:center;gap:.38rem"><span class="live-dot"></span><strong>Live Standings</strong> - updates as results come in</div>`;
+
+  // Header row with refresh button
+  html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:.4rem">
+    <div style="display:flex;align-items:center;gap:.4rem">
+      ${hasRes?`<span class="live-dot"></span><strong style="font-size:.78rem">Live Standings</strong>
+        <span style="font-size:.65rem;color:var(--dim)">— updated ${timeStr}</span>`
+      :`<span style="font-size:.78rem;font-weight:600">Standings</span>
+        <span style="font-size:.65rem;color:var(--dim)">— scores activate June 11</span>`}
+    </div>
+    <button class="btn btn-sm btn-ghost" id="lb-refresh-btn" style="display:flex;align-items:center;gap:.3rem">
+      <span id="lb-refresh-spin" style="display:none;width:10px;height:10px;border:2px solid rgba(201,168,76,.3);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite"></span>
+      ↻ Refresh Scores
+    </button>
+  </div>`;
+
+  if(!hasRes)html+=`<div class="info" style="margin-bottom:.6rem">Enter results in the Admin tab to see live scores.</div>`;
+
   html+=`<div class="lb-wrap"><div class="lb-head"><div>#</div><div>Player</div><div style="text-align:center">Pts</div>
     <div class="lb-hide lb-sub">Grp</div><div class="lb-hide lb-sub">KO</div><div class="lb-hide lb-sub">Fin</div>
     <div style="text-align:center">%</div><div></div></div>`;
@@ -2183,6 +2233,22 @@ function renderLB(){
   scored.forEach(p=>{
     document.getElementById('lbv-'+p.id)?.addEventListener('click',()=>showRC(p.id));
     document.getElementById('lbs-'+p.id)?.addEventListener('click',()=>openShare(p.id));
+  });
+
+  // Refresh scores button — pulls latest from cloud then recalculates
+  document.getElementById('lb-refresh-btn')?.addEventListener('click', async function(){
+    const spin = document.getElementById('lb-refresh-spin');
+    this.disabled = true;
+    if(spin) spin.style.display = 'inline-block';
+    this.lastChild.textContent = ' Refreshing...';
+    if(SYNC_GID && FB_URL){
+      const ok = await cloudPull();
+      if(ok) toast('Synced! Scores recalculated.');
+      else toast('Sync failed — scores recalculated locally.');
+    } else {
+      toast('Scores recalculated!');
+    }
+    renderLB(); // full re-render with fresh scores
   });
 }
 setInterval(()=>{if(document.getElementById('page-leaderboard').classList.contains('active'))renderLB();},30000);
